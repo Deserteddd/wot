@@ -2,22 +2,49 @@ package wot
 
 import "core:unicode/utf8"
 import "core:unicode"
+import "core:fmt"
 
 Lexer :: struct {
     source:         string,
+    path:           string,
+    err:            ErrorHandler,
 	ch:             rune,
     offset:         int,
     read_offset:    int,
     line_offset:    int,
     line_count:     int,
+    error_count:    int
 }
 
-init_lexer :: proc(l: ^Lexer, src: string){
+ErrorHandler :: #type proc(pos: Pos, fmt: string, args: ..any)
+
+default_error_handler :: proc(pos: Pos, msg: string, args: ..any) {
+	fmt.eprintf("%s(%d:%d) ", pos.file, pos.line, pos.column)
+	fmt.eprintf(msg, ..args)
+	fmt.eprintf("\n")
+}
+
+error :: proc(l: ^Lexer, offset: int, msg: string, args: ..any) {
+    pos := offset_to_pos(l, offset)
+    if l.err != nil {
+        l.err(pos, msg, ..args)
+    }
+    l.error_count += 1
+}
+
+init_lexer :: proc(l: ^Lexer, src: string, path: string){
     l.source = src
     l.ch = ' '
+    l.err = default_error_handler
+    l.path = path
     l.line_count = len(src) > 0 ? 1 : 0
     advance_rune(l)
     if l.ch == utf8.RUNE_BOM do advance_rune(l) // Skip byte order mark
+}
+
+peek_token :: proc(l: Lexer) -> Token {
+    lexer := l
+    return scan_token(&lexer)
 }
 
 scan_token :: proc(l: ^Lexer) -> (token: Token) {
@@ -38,7 +65,7 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
         text = scan_string(l)
     } else if ch == '\'' {
         kind = .Char
-        if l.source[l.offset+2] != '\'' do panic("Char not terminated")
+        if l.source[l.offset+2] != '\'' do error(l, l.offset, "Char not terminated")
         text = l.source[l.offset+1:l.offset+2]
         for i in 0..<3 do advance_rune(l)
     } else {
@@ -131,7 +158,10 @@ scan_string :: proc(l: ^Lexer) -> string {
 	offset := l.offset
     for {
         ch := l.ch
-        if ch < 0 do panic("String wasn't terminated")
+        if ch < 0 {
+            error(l, l.offset, "String not terminated")
+            break
+        }
         advance_rune(l)
         if ch == '"' {
             break
@@ -210,13 +240,13 @@ advance_rune :: proc(l: ^Lexer) {
 		r, w := rune(l.source[l.read_offset]), 1
         switch {
             case r == 0:
-                panic("Illegal NUL character")
+                error(l, l.offset, "Illegal NUL character")
             case r >= utf8.RUNE_SELF:
                 r, w = utf8.decode_last_rune_in_string(l.source[l.read_offset:])
                 if r == utf8.RUNE_ERROR && w == 1 {
-                    panic("Illegal UTF-8 encoding")
+                    error(l, l.offset, "Illegal UTF-8 encoding")
                 } else if r == utf8.RUNE_BOM && l.offset > 0 {
-                    panic("Illegal byte order mark")
+                    error(l, l.offset, "Illegal byte order mark")
                 }
         }
         l.read_offset += w
@@ -236,6 +266,7 @@ offset_to_pos :: proc(l: ^Lexer, offset: int) -> Pos {
 	column := offset - l.line_offset + 1
 
 	return Pos {
+        file = l.path,
 		offset = offset,
 		line = line,
 		column = column,

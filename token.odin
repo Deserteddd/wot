@@ -8,6 +8,7 @@ Token :: struct {
 }
 
 Pos :: struct {
+	file:   string,
     offset, line, column: int
 }
 
