@@ -55,9 +55,9 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
     ch := l.ch
 
     if is_letter(ch) {
+        kind = .Id
         text = scan_identifier(l)
         if keyword := keywords[text]; keyword != .Invalid do kind = keyword
-        else do kind = .Id 
     } else if is_digit(ch) {
         kind, text = scan_number(l)
     } else if ch == '"' {
@@ -65,7 +65,7 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
         text = scan_string(l)
     } else if ch == '\'' {
         kind = .Char
-        if l.source[l.offset+2] != '\'' do error(l, l.offset, "Char not terminated")
+        if l.offset+2 >= len(l.source) || l.source[l.offset+2] != '\'' do error(l, l.offset, "Char not terminated")
         text = l.source[l.offset+1:l.offset+2]
         for i in 0..<3 do advance_rune(l)
     } else {

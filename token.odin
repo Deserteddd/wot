@@ -55,10 +55,12 @@ TokenKind :: enum u32 {
     Lt_Eq,
     Gt_Eq,
     
+    If,
     Return,
 }
 
 
 keywords: map[string]TokenKind = {
     "return"  = .Return,
+    "if"      = .If,
 }
