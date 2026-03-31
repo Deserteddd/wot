@@ -1,3 +1,8 @@
+# A language
+
+## Grammar
+
+```A
 <program> 			::= <statement_list>
 
 <statement_list> 	::= <statement>
@@ -13,15 +18,16 @@
 <identifier> 		::= [a-zA-Z_][a-zA-Z0-9_]*
 
 <expression> 		::= <term>
-               		  | <expression> "+" <term>
-               		  | <expression> "-" <term>
+               		  | <term> "+" <expression>
+               		  | <term> "-" <expression>
 					  
 
 <term>       		::= <factor>
-               		  | <term> "*" <factor>
-               		  | <term> "/" <factor>
+               		  | <factor> "*" <term>
+               		  | <factor> "/" <term>
 
 <factor>     		::= <intval>
                		  | <floatval>
                		  | <stringval>
                		  | "(" <expression> ")"
+```

@@ -1,2 +1,5 @@
 /examples
 /input.txt
+/*.exe
+/*.pdb
+/*.rdi

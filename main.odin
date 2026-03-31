@@ -15,7 +15,9 @@ main :: proc() {
 	}
     lexer: Lexer
     init_lexer(&lexer, string(input), os.args[1])
-    parse_program(&lexer)
+    parser: Parser
+    init_parser(&lexer, &parser)
+    program := parse_program(&parser)
 }
 
 
