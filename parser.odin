@@ -2,6 +2,7 @@ package wot
 
 import "core:fmt"
 import "core:strconv"
+import "core:strings"
 
 Program :: struct {
     statements: []Stmt
@@ -82,18 +83,38 @@ parse_program :: proc(p: ^Parser) -> []^Stmt {
 
     for p.current.kind != .EOF {
         stmt := parse_statement(p)
+        // print_statement(stmt)
         append(&stmts, stmt)
     }
 
     return stmts[:]
 }
 
+print_statement :: proc(s: ^Stmt) {
+    indent :: proc(n: int) -> string {
+        b := strings.builder_make(context.temp_allocator)
+        for i in 0..<n {
+            strings.write_rune(&b, '\t')
+        }
+        return strings.to_string(b)
+    }
+    print_expression :: proc(e: ^Expr) {
+        fmt.println(e)
+    }
+    #partial switch &v in s {
+    case AssignStmt:
+        fmt.printf("Assign: %w = ", v.name)
+        print_expression(v.value)
+    }
+}
+
 parse_statement :: proc(p: ^Parser) -> ^Stmt {
+    defer advance(p) //Consume newline or semicolon
     #partial switch p.current.kind {
         case .Id:
             return parse_identifier_statement(p)
         case:
-            error(p.lexer, p.lexer.offset, "Unexpected token")
+            error(p.lexer, p.lexer.offset, "asd token")
             return nil
     }
 }
@@ -101,10 +122,11 @@ parse_statement :: proc(p: ^Parser) -> ^Stmt {
 parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
     name := p.current.text
     advance(p)
-    fmt.println(name)
+    assert(p.current.text == "=")
     #partial switch p.current.kind {
         case .Eq:
-            return parse_assignment(p, name)
+            stmt := parse_assignment(p, name)
+            return stmt
         case:
             panic("Only assign statements are supported")
     }
@@ -115,11 +137,10 @@ parse_assignment :: proc(p: ^Parser, name: string) -> ^Stmt {
     assert(p.current.kind == .Eq)
     advance(p) // consume "="
     value := parse_expression(p)
-
     stmt := new(Stmt)
-    stmt^ = Stmt(AssignStmt{
+    stmt^ = AssignStmt{
         name = name, value = value
-    })
+    }
 
     return stmt
 }
@@ -131,13 +152,14 @@ parse_expression :: proc(p: ^Parser) -> ^Expr {
         advance(p)
 
         right := parse_term(p)
+        node := new(Expr)
+        node^ = BinaryExpr{
+            op = op_token.kind == .Add ? .Add : .Sub,
+            left = left,
+            right = right
+        }
 
-        node := new(BinaryExpr)
-        node.op = op_token.kind == .Add ? .Add : .Sub
-        node.left = left
-        node.right = right
-
-        left = cast(^Expr)node
+        left = node
     }
 
     return left
@@ -145,19 +167,21 @@ parse_expression :: proc(p: ^Parser) -> ^Expr {
 
 parse_term :: proc(p: ^Parser) -> ^Expr {
     left := parse_factor(p)
-
     for p.current.kind == .Mul || p.current.kind == .Div {
         op_token := p.current
         advance(p)
 
         right := parse_factor(p)
 
-        node := new(BinaryExpr)
-        node.op = op_token.kind == .Mul ? .Mul : .Div
-        node.left = left
-        node.right = right
+        node := new(Expr)
 
-        left = cast(^Expr)node
+        node^ = BinaryExpr{
+            op = op_token.kind == .Mul ? .Mul : .Div,
+            left = left,
+            right = right
+        }
+
+        left = node
     }
 
     return left
@@ -167,30 +191,30 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
     #partial switch p.current.kind {
 
     case .Int:
-        node := new(IntExpr)
+        node := new(Expr)
         val, ok := strconv.parse_int(p.current.text); assert(ok)
         node^ = IntExpr(val)
         advance(p)
-        return cast(^Expr)node
+        return node
 
     case .Float:
-        node := new(FloatExpr)
+        node := new(Expr)
         val, ok := strconv.parse_f64(p.current.text); assert(ok)
         node^ = FloatExpr(val)
         advance(p)
-        return cast(^Expr)node
+        return node
 
     case .String:
-        node := new(StringExpr)
+        node := new(Expr)
         node^ = StringExpr(p.current.text)
         advance(p)
-        return cast(^Expr)node
+        return node
 
     case .Id:
-        node := new(IdentifierExpr)
+        node := new(Expr)
         node^ = IdentifierExpr(p.current.text)
         advance(p)
-        return cast(^Expr)node
+        return node
 
     case .OpenParen:
         advance(p) // consume '('
