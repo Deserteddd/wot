@@ -12,31 +12,31 @@ Program :: struct {
 Stmt :: union {
     AssignStmt,
     AddEqStmt,
+    SubEqStmt,
+    MulEqStmt,
+    DivEqStmt,
+    ModEqStmt
 }
 
-AssignStmt :: struct {
-    name: string,
-    value: ^Expr,
-}
+AssignStmt :: distinct IdentifierStmt
+AddEqStmt :: distinct IdentifierStmt
+SubEqStmt :: distinct IdentifierStmt
+MulEqStmt :: distinct IdentifierStmt
+DivEqStmt :: distinct IdentifierStmt
+ModEqStmt :: distinct IdentifierStmt
 
-AddEqStmt :: struct {
-    name: string,
-    value: ^Expr,
-}
-
-Expr_Kind :: enum {
-    Int,
-    Float,
-    String,
-    Identifier,
-    Binary,
+IdentifierStmt :: struct {
+    id: string,
+    value: ^Expr
 }
 
 Binary_Op :: enum {
+    Invalid,
     Add,
     Sub,
     Mul,
     Div,
+    Mod,
 }
 
 IntExpr :: distinct int
@@ -65,7 +65,7 @@ Expr :: union {
 
 Parser :: struct {
     lexer: ^Lexer,
-    current: Token,
+    current, previous: Token
 }
 
 init_parser :: proc(l: ^Lexer, p: ^Parser) {
@@ -74,6 +74,7 @@ init_parser :: proc(l: ^Lexer, p: ^Parser) {
 }
 
 advance :: proc(p: ^Parser) {
+    p.previous = p.current
     p.current = scan_token(p.lexer)
 }
 
@@ -83,29 +84,11 @@ parse_program :: proc(p: ^Parser) -> []^Stmt {
 
     for p.current.kind != .EOF {
         stmt := parse_statement(p)
-        // print_statement(stmt)
+        print("%v", stmt^)
         append(&stmts, stmt)
     }
 
     return stmts[:]
-}
-
-print_statement :: proc(s: ^Stmt) {
-    indent :: proc(n: int) -> string {
-        b := strings.builder_make(context.temp_allocator)
-        for i in 0..<n {
-            strings.write_rune(&b, '\t')
-        }
-        return strings.to_string(b)
-    }
-    print_expression :: proc(e: ^Expr) {
-        fmt.println(e)
-    }
-    #partial switch &v in s {
-    case AssignStmt:
-        fmt.printf("Assign: %w = ", v.name)
-        print_expression(v.value)
-    }
 }
 
 parse_statement :: proc(p: ^Parser) -> ^Stmt {
@@ -114,32 +97,33 @@ parse_statement :: proc(p: ^Parser) -> ^Stmt {
         case .Id:
             return parse_identifier_statement(p)
         case:
-            error(p.lexer, p.lexer.offset, "asd token")
+            error(p.lexer, p.previous.pos.offset, "asd token")
             return nil
     }
 }
 
 parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
-    name := p.current.text
+    id := p.current.text
     advance(p)
-    assert(p.current.text == "=")
-    #partial switch p.current.kind {
-        case .Eq:
-            stmt := parse_assignment(p, name)
-            return stmt
-        case:
-            panic("Only assign statements are supported")
-    }
-    return nil
+    stmt := parse_assignment(p, id)
+    return stmt
 }
 
-parse_assignment :: proc(p: ^Parser, name: string) -> ^Stmt {
-    assert(p.current.kind == .Eq)
-    advance(p) // consume "="
+parse_assignment :: proc(p: ^Parser, id: string) -> ^Stmt {
+    assign_type := p.current.kind
+    if !is_assign_token(assign_type) {
+        error(p.lexer, p.current.pos.offset, "Invalid token")
+    }
+    advance(p) // consume assignment operator
     value := parse_expression(p)
     stmt := new(Stmt)
-    stmt^ = AssignStmt{
-        name = name, value = value
+    #partial switch assign_type {
+        case .Eq: stmt^    = AssignStmt { id, value }
+        case .AddEq: stmt^ = AddEqStmt  { id, value }
+        case .SubEq: stmt^ = SubEqStmt  { id, value }
+        case .MulEq: stmt^ = MulEqStmt  { id, value }
+        case .DivEq: stmt^ = DivEqStmt  { id, value }
+        case .ModEq: stmt^ = ModEqStmt  { id, value }
     }
 
     return stmt
@@ -154,7 +138,7 @@ parse_expression :: proc(p: ^Parser) -> ^Expr {
         right := parse_term(p)
         node := new(Expr)
         node^ = BinaryExpr{
-            op = op_token.kind == .Add ? .Add : .Sub,
+            op = op_token_kind(op_token.kind),
             left = left,
             right = right
         }
@@ -167,7 +151,7 @@ parse_expression :: proc(p: ^Parser) -> ^Expr {
 
 parse_term :: proc(p: ^Parser) -> ^Expr {
     left := parse_factor(p)
-    for p.current.kind == .Mul || p.current.kind == .Div {
+    for p.current.kind == .Mul || p.current.kind == .Div || p.current.kind == .Mod {
         op_token := p.current
         advance(p)
 
@@ -176,7 +160,7 @@ parse_term :: proc(p: ^Parser) -> ^Expr {
         node := new(Expr)
 
         node^ = BinaryExpr{
-            op = op_token.kind == .Mul ? .Mul : .Div,
+            op = op_token_kind(op_token.kind),
             left = left,
             right = right
         }
@@ -231,4 +215,32 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
     case:
         panic("unexpected token in expression")
     }
+}
+
+op_token_kind :: proc(t: TokenKind) -> Binary_Op {
+    #partial switch t {
+        case .Add: return .Add
+        case .Sub: return .Sub
+        case .Mul: return .Mul
+        case .Div: return .Div
+        case .Mod: return .Mod
+        case:      return .Invalid
+    }
+}
+
+is_assign_token :: proc(t: TokenKind) -> bool {
+    return t == .Eq || t == .AddEq || t == .SubEq || 
+    t == .MulEq || t == .DivEq || t == .ModEq
+}
+
+to_string_binary_op :: proc(op: Binary_Op) -> string {
+    switch op {
+        case .Invalid: return "INVALID"
+        case .Add: return "+"
+        case .Sub: return "-"
+        case .Mul: return "*"
+        case .Div: return "/"
+        case .Mod: return "%"
+    }
+    return ""
 }

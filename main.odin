@@ -4,6 +4,8 @@ import os "core:os/os2"
 import "core:fmt"
 import "core:time"
 
+print :: fmt.printfln
+
 main :: proc() {
     start := time.now(); defer fmt.println("Finished in:", time.since(start))
 
