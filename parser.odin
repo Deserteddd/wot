@@ -8,24 +8,17 @@ Program :: struct {
     statements: []Stmt
 }
 
-
-Stmt :: union {
-    AssignStmt,
-    AddEqStmt,
-    SubEqStmt,
-    MulEqStmt,
-    DivEqStmt,
-    ModEqStmt
+StmtType :: enum {
+    Assign,
+    AddEq,
+    SubEq,
+    MulEq,
+    DivEq,
+    ModEq,
 }
 
-AssignStmt :: distinct IdentifierStmt
-AddEqStmt :: distinct IdentifierStmt
-SubEqStmt :: distinct IdentifierStmt
-MulEqStmt :: distinct IdentifierStmt
-DivEqStmt :: distinct IdentifierStmt
-ModEqStmt :: distinct IdentifierStmt
-
-IdentifierStmt :: struct {
+Stmt :: struct {
+    type: StmtType,
     id: string,
     value: ^Expr
 }
@@ -84,11 +77,38 @@ parse_program :: proc(p: ^Parser) -> []^Stmt {
 
     for p.current.kind != .EOF {
         stmt := parse_statement(p)
-        print("%v", stmt^)
+        assert(stmt != nil)
+        print_statement(stmt^) 
         append(&stmts, stmt)
     }
 
     return stmts[:]
+}
+
+print_statement :: proc(s: Stmt) {
+    print_expression :: proc(e: ^Expr) {
+        bin_expr, bin_expr_ok := e.(BinaryExpr)
+        if bin_expr_ok {
+            fmt.printf("(")
+            print_expression(bin_expr.left)
+            fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
+            print_expression(bin_expr.right)
+            fmt.printf(")")
+        } else {
+            fmt.printf("%v", e^)
+        }
+        
+    }
+    fmt.printf("%v, id %v, ", s.type, s.id)
+    #partial switch &v in s.value {
+        case BinaryExpr:
+            print_expression(v.left)
+            fmt.printf(" %v ", to_string_binary_op(v.op))
+            print_expression(v.right)
+        case:
+            print_expression(&v)
+    }
+    fmt.println()
 }
 
 parse_statement :: proc(p: ^Parser) -> ^Stmt {
@@ -117,13 +137,15 @@ parse_assignment :: proc(p: ^Parser, id: string) -> ^Stmt {
     advance(p) // consume assignment operator
     value := parse_expression(p)
     stmt := new(Stmt)
+    stmt.id = id
+    stmt.value = value
     #partial switch assign_type {
-        case .Eq: stmt^    = AssignStmt { id, value }
-        case .AddEq: stmt^ = AddEqStmt  { id, value }
-        case .SubEq: stmt^ = SubEqStmt  { id, value }
-        case .MulEq: stmt^ = MulEqStmt  { id, value }
-        case .DivEq: stmt^ = DivEqStmt  { id, value }
-        case .ModEq: stmt^ = ModEqStmt  { id, value }
+        case .Eq:    stmt.type = .Assign
+        case .AddEq: stmt.type = .AddEq
+        case .SubEq: stmt.type = .SubEq
+        case .MulEq: stmt.type = .MulEq
+        case .DivEq: stmt.type = .DivEq
+        case .ModEq: stmt.type = .ModEq
     }
 
     return stmt
