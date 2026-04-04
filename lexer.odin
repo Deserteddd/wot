@@ -86,6 +86,16 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
             case ',': kind = .Comma
             case ':': kind = .Colon
             case ';': kind = .Semicolon
+            case '|':
+                if l.ch == '|' {
+                    advance_rune(l)
+                    kind = .Or
+                }
+            case '&':
+                if l.ch == '&' {
+                    advance_rune(l)
+                    kind = .And
+                }
             case '\n':
                     kind = .Newline
                     text = "\n"

@@ -4,8 +4,6 @@ import os "core:os/os2"
 import "core:fmt"
 import "core:time"
 
-print :: fmt.printfln
-
 main :: proc() {
     start := time.now(); defer fmt.println("Finished in:", time.since(start))
 
@@ -20,6 +18,7 @@ main :: proc() {
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
+    run(program)
 }
 
 

@@ -2,7 +2,7 @@ package wot
 
 import "core:fmt"
 import "core:strconv"
-import "core:strings"
+import os "core:os/os2"
 
 Program :: struct {
     statements: []Stmt
@@ -15,6 +15,7 @@ StmtType :: enum {
     MulEq,
     DivEq,
     ModEq,
+    Return
 }
 
 Stmt :: struct {
@@ -30,17 +31,21 @@ Binary_Op :: enum {
     Mul,
     Div,
     Mod,
+    Or,
+    And,
+    CmpEq,
+    NotEq,
+    Lt,
+    Gt,
+    Lt_Eq,
+    Gt_Eq,
 }
 
-IntExpr :: distinct int
-
-
-FloatExpr :: distinct f64
-
-
-StringExpr :: distinct string
-
-IdentifierExpr :: distinct string
+IntExpr         :: distinct int
+FloatExpr       :: distinct f64
+BoolExpr        :: distinct bool
+StringExpr      :: distinct string
+IdentifierExpr  :: distinct string
 
 BinaryExpr :: struct {
     op: Binary_Op,
@@ -52,13 +57,15 @@ Expr :: union {
     IntExpr,
     FloatExpr,
     StringExpr,
+    BoolExpr,
     IdentifierExpr,
     BinaryExpr,
 }
 
 Parser :: struct {
     lexer: ^Lexer,
-    current, previous: Token
+    current, previous: Token,
+    names: [dynamic]string
 }
 
 init_parser :: proc(l: ^Lexer, p: ^Parser) {
@@ -77,12 +84,21 @@ parse_program :: proc(p: ^Parser) -> []^Stmt {
 
     for p.current.kind != .EOF {
         stmt := parse_statement(p)
-        assert(stmt != nil)
-        print_statement(stmt^) 
+        if stmt == nil {
+            fmt.eprintfln("Failed to parse file %w", p.lexer.path)
+            os.exit(1)
+        }
+        // println_statement(stmt^)
         append(&stmts, stmt)
+        for p.current.kind == .Newline do advance(p)
     }
 
     return stmts[:]
+}
+
+println_statement :: proc(s: Stmt) {
+    print_statement(s)
+    fmt.println()
 }
 
 print_statement :: proc(s: Stmt) {
@@ -99,7 +115,8 @@ print_statement :: proc(s: Stmt) {
         }
         
     }
-    fmt.printf("%v, id %v, ", s.type, s.id)
+    if s.type != .Return do fmt.printf("%v ", s.id)
+    fmt.printf("%v ", s.type)
     #partial switch &v in s.value {
         case BinaryExpr:
             print_expression(v.left)
@@ -108,7 +125,6 @@ print_statement :: proc(s: Stmt) {
         case:
             print_expression(&v)
     }
-    fmt.println()
 }
 
 parse_statement :: proc(p: ^Parser) -> ^Stmt {
@@ -116,15 +132,33 @@ parse_statement :: proc(p: ^Parser) -> ^Stmt {
     #partial switch p.current.kind {
         case .Id:
             return parse_identifier_statement(p)
+        case .Return:
+            return parse_return_statement(p)
         case:
-            error(p.lexer, p.previous.pos.offset, "asd token")
             return nil
     }
+}
+
+parse_return_statement :: proc(p: ^Parser) -> ^Stmt {
+    advance(p) // Consume return keyword
+    stmt := new(Stmt)
+    stmt.type = .Return
+    stmt.id = "return"
+    stmt.value = parse_expression(p)
+    return stmt
 }
 
 parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
     id := p.current.text
     advance(p)
+    if p.current.kind == .Eq {
+        if !is_declared(p, id) {
+            append(&p.names, id)
+        }
+    } else if !is_declared(p, id) {
+        error(p.lexer, p.current.pos.offset, "Undeclared name: %w", id)
+        return nil
+    }
     stmt := parse_assignment(p, id)
     return stmt
 }
@@ -132,7 +166,7 @@ parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
 parse_assignment :: proc(p: ^Parser, id: string) -> ^Stmt {
     assign_type := p.current.kind
     if !is_assign_token(assign_type) {
-        error(p.lexer, p.current.pos.offset, "Invalid token")
+        error(p.lexer, p.current.pos.offset, "Invalid token: %v", p.current.text)
     }
     advance(p) // consume assignment operator
     value := parse_expression(p)
@@ -151,13 +185,14 @@ parse_assignment :: proc(p: ^Parser, id: string) -> ^Stmt {
     return stmt
 }
 
+
 parse_expression :: proc(p: ^Parser) -> ^Expr {
-    left := parse_term(p)
-    for p.current.kind == .Add || p.current.kind == .Sub {
+    left := parse_and(p)
+    for p.current.kind == .Or {
         op_token := p.current
         advance(p)
 
-        right := parse_term(p)
+        right := parse_and(p)
         node := new(Expr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
@@ -171,16 +206,95 @@ parse_expression :: proc(p: ^Parser) -> ^Expr {
     return left
 }
 
-parse_term :: proc(p: ^Parser) -> ^Expr {
+parse_and :: proc(p: ^Parser) -> ^Expr {
+    left := parse_eq(p)
+    for p.current.kind == .And {
+        op_token := p.current
+        advance(p)
+
+        right := parse_eq(p)
+        node := new(Expr)
+        node^ = BinaryExpr{
+            op = op_token_kind(op_token.kind),
+            left = left,
+            right = right
+        }
+
+        left = node
+    }
+
+    return left
+}
+
+parse_eq :: proc(p: ^Parser) -> ^Expr {
+    left := parse_cmp(p)
+    for p.current.kind == .CmpEq || p.current.kind == .NotEq {
+        op_token := p.current
+        advance(p)
+
+        right := parse_cmp(p)
+        node := new(Expr)
+        node^ = BinaryExpr{
+            op = op_token_kind(op_token.kind),
+            left = left,
+            right = right
+        }
+
+        left = node
+    }
+
+    return left
+}
+
+parse_cmp :: proc(p: ^Parser) -> ^Expr {
+    left := parse_additive(p)
+    for p.current.kind == .Lt || p.current.kind == .Gt || 
+        p.current.kind == .Gt_Eq || p.current.kind == .Lt_Eq {
+        op_token := p.current
+        advance(p)
+
+        right := parse_additive(p)
+        node := new(Expr)
+        node^ = BinaryExpr{
+            op = op_token_kind(op_token.kind),
+            left = left,
+            right = right
+        }
+
+        left = node
+    }
+
+    return left
+}
+
+parse_additive :: proc(p: ^Parser) -> ^Expr {
+    left := parse_multiplicative(p)
+    for p.current.kind == .Add || p.current.kind == .Sub {
+        op_token := p.current
+        advance(p)
+
+        right := parse_multiplicative(p)
+        node := new(Expr)
+        node^ = BinaryExpr{
+            op = op_token_kind(op_token.kind),
+            left = left,
+            right = right
+        }
+
+        left = node
+    }
+
+    return left
+}
+
+parse_multiplicative :: proc(p: ^Parser) -> ^Expr {
     left := parse_factor(p)
     for p.current.kind == .Mul || p.current.kind == .Div || p.current.kind == .Mod {
         op_token := p.current
         advance(p)
 
         right := parse_factor(p)
-
         node := new(Expr)
-
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
             left = left,
@@ -215,8 +329,18 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
         node^ = StringExpr(p.current.text)
         advance(p)
         return node
+    
+    case .True, .False:
+        node := new(Expr)
+        node^ = BoolExpr(p.current.kind == .True ? true : false)
+        advance(p)
+        return node
 
     case .Id:
+        if !is_declared(p, p.current.text) {
+            error(p.lexer, p.current.pos.offset, "Undeclared name: %w", p.current.text)
+            return nil
+        }
         node := new(Expr)
         node^ = IdentifierExpr(p.current.text)
         advance(p)
@@ -235,8 +359,16 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
         return expr
 
     case:
-        panic("unexpected token in expression")
+        error(p.lexer, p.current.pos.offset, "Invalid Token: %w", p.current.text)
+        return nil
     }
+}
+
+is_declared :: proc(p: ^Parser, name: string) -> bool {
+    for n in p.names {
+        if n == name do return true
+    }
+    return false
 }
 
 op_token_kind :: proc(t: TokenKind) -> Binary_Op {
@@ -246,6 +378,14 @@ op_token_kind :: proc(t: TokenKind) -> Binary_Op {
         case .Mul: return .Mul
         case .Div: return .Div
         case .Mod: return .Mod
+        case .Or:  return .Or
+        case .And: return .And
+        case .CmpEq:    return .CmpEq
+        case .NotEq:    return .NotEq
+        case .Lt:       return .Lt
+        case .Gt:       return .Gt
+        case .Lt_Eq:    return .Lt_Eq
+        case .Gt_Eq:    return .Gt_Eq
         case:      return .Invalid
     }
 }
@@ -263,6 +403,14 @@ to_string_binary_op :: proc(op: Binary_Op) -> string {
         case .Mul: return "*"
         case .Div: return "/"
         case .Mod: return "%"
+        case .CmpEq: return "=="
+        case .NotEq: return "!="
+        case .Lt:    return "<"
+        case .Gt:    return ">"
+        case .Lt_Eq: return "<="
+        case .Gt_Eq: return ">="
+        case .Or:    return "||"
+        case .And:   return "&&"
     }
     return ""
 }
