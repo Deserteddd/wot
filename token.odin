@@ -62,6 +62,7 @@ TokenKind :: enum u32 {
     Return,
     True,
     False,
+    Print,
 }
 
 
@@ -70,4 +71,5 @@ keywords: map[string]TokenKind = {
     "if"      = .If,
     "true"    = .True,
     "false"   = .False,
+    "print"   = .Print
 }

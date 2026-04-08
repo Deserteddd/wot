@@ -79,7 +79,7 @@ run :: proc(stmts: []^Stmt) {
 
                 vars[stmt.id] = Var{type = value_type(value), value = value}
 
-            case .Return:
+            case .Print:
                 fmt.println(eval(stmt.value^))
         }
     }

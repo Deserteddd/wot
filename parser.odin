@@ -15,7 +15,9 @@ StmtType :: enum {
     MulEq,
     DivEq,
     ModEq,
-    Return
+    Return,
+    If,
+    Print,
 }
 
 Stmt :: struct {
@@ -132,18 +134,28 @@ parse_statement :: proc(p: ^Parser) -> ^Stmt {
     #partial switch p.current.kind {
         case .Id:
             return parse_identifier_statement(p)
-        case .Return:
-            return parse_return_statement(p)
+        case .Return, .Print:
+            return parse_keyword_stmt(p)
         case:
             return nil
     }
 }
 
-parse_return_statement :: proc(p: ^Parser) -> ^Stmt {
-    advance(p) // Consume return keyword
+
+parse_keyword_stmt :: proc(p: ^Parser) -> ^Stmt {
+    keyword := p.current.kind
     stmt := new(Stmt)
-    stmt.type = .Return
-    stmt.id = "return"
+    #partial switch keyword {
+        case .Return:
+            stmt.id = "return"
+            stmt.type = .Return
+        case .Print:
+            stmt.id = "print"
+            stmt.type = .Print
+        case:
+            error(p.lexer, p.current.pos.offset, "Not implemented: %v", keyword)
+    }
+    advance(p) // Consume keyword
     stmt.value = parse_expression(p)
     return stmt
 }
