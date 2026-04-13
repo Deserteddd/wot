@@ -19,10 +19,48 @@ StmtType :: enum {
     Print,
 }
 
-Stmt :: struct {
-    type: StmtType,
-    id: string,
+
+Stmt :: union {
+    AssignStmt,
+    ReturnStmt,
+    PrintStmt,
+    IfStmt,
+    WhileStmt,
+    BlockStmt,
+}
+
+AssignStmt :: struct {
+    op: AssignOp,
+    id: Token,
     value: ^Expr
+}
+
+ReturnStmt :: distinct ^Expr
+
+PrintStmt :: distinct ^Expr
+
+IfStmt :: struct {
+    condition: ^Expr,
+    main_body,
+    else_body: BlockStmt
+}
+
+BlockStmt :: distinct []^Stmt
+
+WhileStmt :: struct {
+    condition: ^Expr,
+    body: BlockStmt
+}
+
+
+AssignOp :: enum {
+    Invalid,
+    Assign,
+    AddEq,
+    SubEq,
+    MulEq,
+    DivEq,
+    ModEq,
 }
 
 Expr :: union {
@@ -63,28 +101,28 @@ BinaryExpr :: struct {
     right: ^Expr,
 }
 
-
-
-
 Parser :: struct {
     lexer: ^Lexer,
-    current, previous: Token,
+    current: Token,
     names: [dynamic]string
 }
 
 init_parser :: proc(l: ^Lexer, p: ^Parser) {
     p.lexer = l
     p.current = scan_token(p.lexer)
+    skip_newline(p)
+}
+
+skip_newline :: proc(p: ^Parser) {
+    for p.current.kind == .Newline {
+        p.current = scan_token(p.lexer)
+    }
 }
 
 advance :: proc(p: ^Parser) {
-    p.previous = p.current
     p.current = scan_token(p.lexer)
 }
 
-/*
-{}
-*/
 parse_program :: proc(p: ^Parser) -> []^Stmt {
     stmts: [dynamic]^Stmt
 
@@ -96,88 +134,90 @@ parse_program :: proc(p: ^Parser) -> []^Stmt {
         }
         // println_statement(stmt^)
         append(&stmts, stmt)
-        for p.current.kind == .Newline do advance(p)
+        skip_newline(p)
+        if p.current.kind == .CloseBrace do return stmts[:]
     }
 
     return stmts[:]
 }
 
-parse_error :: proc(pos: Pos, msg: string, args: ..any) {
-	fmt.eprintf("Parse error: %s(%d:%d) ", pos.file, pos.line, pos.column)
+parse_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_location) {
+	fmt.eprintf("%v Parse error: %s(%d:%d) ", loc, pos.file, pos.line, pos.column)
 	fmt.eprintf(msg, ..args)
 	fmt.eprintf("\n")
 }
 
-println_statement :: proc(s: Stmt) {
-    print_statement(s)
-    fmt.println()
-}
-
-print_statement :: proc(s: Stmt) {
-    print_expression :: proc(e: ^Expr) {
-        bin_expr, bin_expr_ok := e.(BinaryExpr)
-        if bin_expr_ok {
-            fmt.printf("(")
-            print_expression(bin_expr.left)
-            fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
-            print_expression(bin_expr.right)
-            fmt.printf(")")
-        } else {
-            fmt.printf("%v", e^)
-        }
-        
-    }
-    if s.type != .Return do fmt.printf("%v ", s.id)
-    fmt.printf("%v ", s.type)
-    #partial switch &v in s.value {
-        case BinaryExpr:
-            print_expression(v.left)
-            fmt.printf(" %v ", to_string_binary_op(v.op))
-            print_expression(v.right)
-        case:
-            print_expression(&v)
-    }
-}
-
-parse_statement :: proc(p: ^Parser) -> ^Stmt {
+parse_statement :: proc(p: ^Parser, loc := #caller_location) -> ^Stmt {
     defer advance(p) //Consume newline or semicolon
     #partial switch p.current.kind {
         case .Id:
-            return parse_identifier_statement(p)
+            return parse_identifier_stmt(p)
         case .Return, .Print:
             return parse_keyword_stmt(p)
+        case .If:
+            return parse_if_stmt(p)
         case:
+            parse_error(p.current.pos, "Unexpected token: %w", p.current.text, loc = loc)
             return nil
     }
 }
 
 
 parse_keyword_stmt :: proc(p: ^Parser) -> ^Stmt {
-    keyword := p.current.kind
+    keyword := p.current
     stmt := new(Stmt)
-    #partial switch keyword {
+    advance(p) // Consume keyword
+    #partial switch keyword.kind {
         case .Return:
-            stmt.id = "return"
-            stmt.type = .Return
+            stmt^ = ReturnStmt (parse_expression(p))
         case .Print:
-            stmt.id = "print"
-            stmt.type = .Print
+            stmt^ = PrintStmt (parse_expression(p))
         case:
             parse_error(p.current.pos, "Not implemented: %v", keyword)
+            return nil
     }
-    advance(p) // Consume keyword
-    stmt.value = parse_expression(p)
     return stmt
 }
 
-parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
-    id := p.current.text
+parse_if_stmt :: proc(p: ^Parser) -> ^Stmt {
+    advance(p)
+    condition := parse_expression(p)
+    skip_newline(p)
+    advance(p) // Consume {
+    skip_newline(p)
+    body := parse_block_stmt(p)
+    else_body: []^Stmt
+    if p.current.kind == .Else {
+        advance(p) // Consume ELSE
+        advance(p) // Consume {
+        skip_newline(p)
+        else_body = parse_block_stmt(p)
+    }
+    stmt := new(Stmt)
+    stmt^ = IfStmt {
+        condition = condition,
+        main_body = BlockStmt(body),
+        else_body = BlockStmt(else_body)
+    }
+    return stmt
+}
+
+parse_block_stmt :: proc(p: ^Parser) -> []^Stmt {
+    if p.current.kind == .CloseBrace do return nil
+    stmts := parse_program(p)
+    advance(p) // consume }
+
+    return stmts
+}
+
+parse_identifier_stmt :: proc(p: ^Parser) -> ^Stmt {
+    id := p.current
     advance(p)
     if p.current.kind == .Eq {
-        if !is_declared(p, id) {
-            append(&p.names, id)
+        if !is_declared(p, id.text) {
+            append(&p.names, id.text)
         }
-    } else if !is_declared(p, id) {
+    } else if !is_declared(p, id.text) {
         parse_error(p.current.pos, "Undeclared name: %w", id)
         return nil
     }
@@ -185,27 +225,36 @@ parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
     return stmt
 }
 
-parse_assignment :: proc(p: ^Parser, id: string) -> ^Stmt {
-    assign_type := p.current.kind
-    if !is_assign_token(assign_type) {
+parse_assignment :: proc(p: ^Parser, id: Token) -> ^Stmt {
+    op_token := p.current
+    if !is_assign_token(op_token.kind) {
         parse_error(p.current.pos, "Invalid token: %v", p.current.text)
     }
     advance(p) // consume assignment operator
     value := parse_expression(p)
     stmt := new(Stmt)
-    stmt.id = id
-    stmt.value = value
-    #partial switch assign_type {
-        case .Eq:    stmt.type = .Assign
-        case .AddEq: stmt.type = .AddEq
-        case .SubEq: stmt.type = .SubEq
-        case .MulEq: stmt.type = .MulEq
-        case .DivEq: stmt.type = .DivEq
-        case .ModEq: stmt.type = .ModEq
-        
+    stmt^ = AssignStmt {
+        op = get_assign_op(op_token),
+        id = id,
+        value = value
     }
 
+
     return stmt
+}
+
+get_assign_op :: proc(token: Token) -> AssignOp{
+    #partial switch token.kind {
+        case .Eq:       return .Assign
+        case .AddEq:    return .AddEq
+        case .SubEq:    return .SubEq
+        case .MulEq:    return .MulEq
+        case .DivEq:    return .DivEq
+        case .ModEq:    return .ModEq
+        case:
+            parse_error(token.pos, "Invalid assignment: %v", token.text)
+            return .Invalid
+    }
 }
 
 
@@ -386,6 +435,47 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
         return nil
     }
 }
+
+println_statement :: proc(s: Stmt) {
+    print_statement(s)
+    fmt.println()
+}
+
+print_statement :: proc(s: Stmt) {
+    print_expression :: proc(e: ^Expr) {
+        bin_expr, bin_expr_ok := e.(BinaryExpr)
+        if bin_expr_ok {
+            fmt.printf("(")
+            print_expression(bin_expr.left)
+            fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
+            print_expression(bin_expr.right)
+            fmt.printf(")")
+        } else {
+            fmt.printf("%v", e^)
+        }
+        
+    }
+    #partial switch stmt in s {
+        case AssignStmt:
+            fmt.print(stmt.id.text, stmt.op, "")
+            print_expression(stmt.value)
+        case IfStmt:
+            fmt.printf("If: ")
+            print_expression(stmt.condition)
+            fmt.println()
+            for sub_stmt in stmt.main_body do println_statement(sub_stmt^)
+            if stmt.else_body != nil {
+                fmt.printf("Else:\n")
+                for sub_stmt in stmt.else_body do println_statement(sub_stmt^)
+            }
+            fmt.println("END")
+        case PrintStmt:
+            fmt.println("PRINT:", stmt^)
+
+    }
+}
+
+
 
 is_declared :: proc(p: ^Parser, name: string) -> bool {
     for n in p.names {

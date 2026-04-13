@@ -39,115 +39,114 @@ init_lexer :: proc(l: ^Lexer, src: string, path: string){
 
 
 scan_token :: proc(l: ^Lexer) -> (token: Token) {
-    using token
     skip_whitespace(l)
     offset := l.offset
-    pos = offset_to_pos(l, offset)
+    token.pos = offset_to_pos(l, offset)
     ch := l.ch
 
     if is_letter(ch) {
-        kind = .Id
-        text = scan_identifier(l)
-        if keyword := keywords[text]; keyword != .Invalid do kind = keyword
+        token.kind = .Id
+        token.text = scan_identifier(l)
+        if keyword := keywords[token.text]; keyword != .Invalid do token.kind = keyword
     } else if is_digit(ch) {
-        kind, text = scan_number(l)
+        token.kind, token.text = scan_number(l)
     } else if ch == '"' {
-        kind = .String
-        text = scan_string(l)
+        token.kind = .String
+        token.text = scan_string(l)
     } else if ch == '\'' {
-        kind = .Char
+        token.kind = .Char
         if l.offset+2 >= len(l.source) || l.source[l.offset+2] != '\'' do lex_error(l, l.offset, "Char not terminated")
-        text = l.source[l.offset+1:l.offset+2]
+        token.text = l.source[l.offset+1:l.offset+2]
         for _ in 0..<3 do advance_rune(l)
     } else {
         advance_rune(l)
         switch ch {
             case -1:  
-                kind = .EOF
-                text = "EOF"
+                token.kind = .EOF
+                token.text = "EOF"
                 return
 
-            case '(': kind = .OpenParen
-            case ')': kind = .CloseParen
-            case '[': kind = .OpenBracket
-            case ']': kind = .CloseBracket
-            case '{': kind = .OpenBrace
-            case '}': kind = .CloseBrace
-            case '.': kind = .Period
-            case ',': kind = .Comma
-            case ':': kind = .Colon
-            case ';': kind = .Semicolon
+            case '(': token.kind = .OpenParen
+            case ')': token.kind = .CloseParen
+            case '[': token.kind = .OpenBracket
+            case ']': token.kind = .CloseBracket
+            case '{': token.kind = .OpenBrace
+            case '}': token.kind = .CloseBrace
+            case '.': token.kind = .Period
+            case ',': token.kind = .Comma
+            case ':': token.kind = .Colon
+            case ';': token.kind = .Semicolon
             case '|':
                 if l.ch == '|' {
                     advance_rune(l)
-                    kind = .Or
+                    token.kind = .Or
                 }
             case '&':
                 if l.ch == '&' {
                     advance_rune(l)
-                    kind = .And
+                    token.kind = .And
                 }
             case '\n':
-                    kind = .Newline
-                    text = "\n"
+                    token.kind = .Newline
+                    token.text = "\n"
                     return
 
             case '=':
-                kind = .Eq
+                token.kind = .Eq
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .CmpEq
+                    token.kind = .CmpEq
                 }
             case '!':
-                kind = .Not
+                token.kind = .Not
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .NotEq
+                    token.kind = .NotEq
                 }
             case '+':
-                kind = .Add
+                token.kind = .Add
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .AddEq
+                    token.kind = .AddEq
                 }
             case '-':
-                kind = .Sub
+                token.kind = .Sub
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .SubEq
+                    token.kind = .SubEq
                 }
             case '*':
-                kind = .Mul
+                token.kind = .Mul
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .MulEq
+                    token.kind = .MulEq
                 }
             case '/':
-                kind = .Div
+                token.kind = .Div
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .DivEq
+                    token.kind = .DivEq
                 }
             case '%':
-                kind = .Mod
+                token.kind = .Mod
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .ModEq
+                    token.kind = .ModEq
                 }
             case '<':
-                kind = .Lt
+                token.kind = .Lt
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .Lt_Eq
+                    token.kind = .Lt_Eq
                 }
             case '>':
-                kind = .Gt
+                token.kind = .Gt
                 if l.ch == '=' {
                     advance_rune(l)
-                    kind = .Gt_Eq
+                    token.kind = .Gt_Eq
                 }
         }
-        text = string(l.source[offset : l.offset])
+        token.text = string(l.source[offset : l.offset])
         
     }
 

@@ -54,35 +54,24 @@ binary_op_from_stmt_type :: proc(t: StmtType) -> (op: Binary_Op, ok: bool) {
 }
 
 run :: proc(stmts: []^Stmt, depth := 0) {
-    vars = make(map[string]Var)
     for stmt in stmts {
-        #partial switch stmt.type {
-            case .Assign:
-                rhs := eval(stmt.value^)
-                vars[stmt.id] = Var{type = value_type(rhs), value = rhs, depth = depth}
-
-            case .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
-                old_var, exists := vars[stmt.id]
-                if !exists {
-                    panic("Undefined identifier in compound assignment")
+        #partial switch &s in stmt {
+            case AssignStmt:
+                rhs := eval(s.value^)
+                vars[s.id.text] = Var{type = value_type(rhs), value = rhs, depth = depth}
+            case PrintStmt:
+                fmt.println(eval(s^))
+            case IfStmt:
+                cond := eval(s.condition^)
+                if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
+                    if bool_val {
+                        run(cast([]^Stmt)s.main_body)
+                    } else {
+                        run(cast([]^Stmt)s.else_body)
+                    }
+                } else {
+                    panic("If-condition must evaluate to bool")
                 }
-
-                rhs := eval(stmt.value^)
-                op, op_ok := binary_op_from_stmt_type(stmt.type)
-                if !op_ok {
-                    panic("Invalid compound assignment operator")
-                }
-
-                value, ok := apply_op(op, old_var.value, rhs)
-                if !ok {
-                    panic("Invalid compound assignment operands")
-                }
-
-                vars[stmt.id] = Var{type = value_type(value), value = value}
-
-            case .Print:
-                fmt.println(eval(stmt.value^))
-            
         }
     }
 }
