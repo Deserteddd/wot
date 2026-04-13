@@ -7,7 +7,6 @@ import "core:fmt"
 Lexer :: struct {
     source:         string,
     path:           string,
-    err:            ErrorHandler,
 	ch:             rune,
     offset:         int,
     read_offset:    int,
@@ -16,7 +15,6 @@ Lexer :: struct {
     error_count:    int
 }
 
-ErrorHandler :: #type proc(pos: Pos, fmt: string, args: ..any)
 
 default_error_handler :: proc(pos: Pos, msg: string, args: ..any) {
 	fmt.eprintf("%s(%d:%d) ", pos.file, pos.line, pos.column)
@@ -24,28 +22,21 @@ default_error_handler :: proc(pos: Pos, msg: string, args: ..any) {
 	fmt.eprintf("\n")
 }
 
-error :: proc(l: ^Lexer, offset: int, msg: string, args: ..any) {
+lex_error :: proc(l: ^Lexer, offset: int, msg: string, args: ..any) {
     pos := offset_to_pos(l, offset)
-    if l.err != nil {
-        l.err(pos, msg, ..args)
-    }
+    default_error_handler(pos, msg, ..args)
     l.error_count += 1
 }
 
 init_lexer :: proc(l: ^Lexer, src: string, path: string){
     l.source = src
     l.ch = ' '
-    l.err = default_error_handler
     l.path = path
     l.line_count = len(src) > 0 ? 1 : 0
     advance_rune(l)
     if l.ch == utf8.RUNE_BOM do advance_rune(l) // Skip byte order mark
 }
 
-peek_token :: proc(l: Lexer) -> Token {
-    lexer := l
-    return scan_token(&lexer)
-}
 
 scan_token :: proc(l: ^Lexer) -> (token: Token) {
     using token
@@ -65,9 +56,9 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
         text = scan_string(l)
     } else if ch == '\'' {
         kind = .Char
-        if l.offset+2 >= len(l.source) || l.source[l.offset+2] != '\'' do error(l, l.offset, "Char not terminated")
+        if l.offset+2 >= len(l.source) || l.source[l.offset+2] != '\'' do lex_error(l, l.offset, "Char not terminated")
         text = l.source[l.offset+1:l.offset+2]
-        for i in 0..<3 do advance_rune(l)
+        for _ in 0..<3 do advance_rune(l)
     } else {
         advance_rune(l)
         switch ch {
@@ -169,7 +160,7 @@ scan_string :: proc(l: ^Lexer) -> string {
     for {
         ch := l.ch
         if ch < 0 {
-            error(l, l.offset, "String not terminated")
+            lex_error(l, l.offset, "String not terminated")
             break
         }
         advance_rune(l)
@@ -250,13 +241,13 @@ advance_rune :: proc(l: ^Lexer) {
 		r, w := rune(l.source[l.read_offset]), 1
         switch {
             case r == 0:
-                error(l, l.offset, "Illegal NUL character")
+                lex_error(l, l.offset, "Illegal NUL character")
             case r >= utf8.RUNE_SELF:
                 r, w = utf8.decode_last_rune_in_string(l.source[l.read_offset:])
                 if r == utf8.RUNE_ERROR && w == 1 {
-                    error(l, l.offset, "Illegal UTF-8 encoding")
+                    lex_error(l, l.offset, "Illegal UTF-8 encoding")
                 } else if r == utf8.RUNE_BOM && l.offset > 0 {
-                    error(l, l.offset, "Illegal byte order mark")
+                    lex_error(l, l.offset, "Illegal byte order mark")
                 }
         }
         l.read_offset += w

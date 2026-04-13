@@ -16,7 +16,6 @@ StmtType :: enum {
     DivEq,
     ModEq,
     Return,
-    If,
     Print,
 }
 
@@ -24,6 +23,15 @@ Stmt :: struct {
     type: StmtType,
     id: string,
     value: ^Expr
+}
+
+Expr :: union {
+    IntExpr,
+    FloatExpr,
+    StringExpr,
+    BoolExpr,
+    IdentifierExpr,
+    BinaryExpr,
 }
 
 Binary_Op :: enum {
@@ -55,14 +63,8 @@ BinaryExpr :: struct {
     right: ^Expr,
 }
 
-Expr :: union {
-    IntExpr,
-    FloatExpr,
-    StringExpr,
-    BoolExpr,
-    IdentifierExpr,
-    BinaryExpr,
-}
+
+
 
 Parser :: struct {
     lexer: ^Lexer,
@@ -80,7 +82,9 @@ advance :: proc(p: ^Parser) {
     p.current = scan_token(p.lexer)
 }
 
-
+/*
+{}
+*/
 parse_program :: proc(p: ^Parser) -> []^Stmt {
     stmts: [dynamic]^Stmt
 
@@ -96,6 +100,12 @@ parse_program :: proc(p: ^Parser) -> []^Stmt {
     }
 
     return stmts[:]
+}
+
+parse_error :: proc(pos: Pos, msg: string, args: ..any) {
+	fmt.eprintf("Parse error: %s(%d:%d) ", pos.file, pos.line, pos.column)
+	fmt.eprintf(msg, ..args)
+	fmt.eprintf("\n")
 }
 
 println_statement :: proc(s: Stmt) {
@@ -153,7 +163,7 @@ parse_keyword_stmt :: proc(p: ^Parser) -> ^Stmt {
             stmt.id = "print"
             stmt.type = .Print
         case:
-            error(p.lexer, p.current.pos.offset, "Not implemented: %v", keyword)
+            parse_error(p.current.pos, "Not implemented: %v", keyword)
     }
     advance(p) // Consume keyword
     stmt.value = parse_expression(p)
@@ -168,7 +178,7 @@ parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
             append(&p.names, id)
         }
     } else if !is_declared(p, id) {
-        error(p.lexer, p.current.pos.offset, "Undeclared name: %w", id)
+        parse_error(p.current.pos, "Undeclared name: %w", id)
         return nil
     }
     stmt := parse_assignment(p, id)
@@ -178,7 +188,7 @@ parse_identifier_statement :: proc(p: ^Parser) -> ^Stmt {
 parse_assignment :: proc(p: ^Parser, id: string) -> ^Stmt {
     assign_type := p.current.kind
     if !is_assign_token(assign_type) {
-        error(p.lexer, p.current.pos.offset, "Invalid token: %v", p.current.text)
+        parse_error(p.current.pos, "Invalid token: %v", p.current.text)
     }
     advance(p) // consume assignment operator
     value := parse_expression(p)
@@ -192,6 +202,7 @@ parse_assignment :: proc(p: ^Parser, id: string) -> ^Stmt {
         case .MulEq: stmt.type = .MulEq
         case .DivEq: stmt.type = .DivEq
         case .ModEq: stmt.type = .ModEq
+        
     }
 
     return stmt
@@ -320,8 +331,8 @@ parse_multiplicative :: proc(p: ^Parser) -> ^Expr {
 }
 
 parse_factor :: proc(p: ^Parser) -> ^Expr {
+    // parse_factor_calls += 1
     #partial switch p.current.kind {
-
     case .Int:
         node := new(Expr)
         val, ok := strconv.parse_int(p.current.text); assert(ok)
@@ -350,7 +361,7 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
 
     case .Id:
         if !is_declared(p, p.current.text) {
-            error(p.lexer, p.current.pos.offset, "Undeclared name: %w", p.current.text)
+            parse_error(p.current.pos, "Undeclared name: %w", p.current.text)
             return nil
         }
         node := new(Expr)
@@ -371,7 +382,7 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
         return expr
 
     case:
-        error(p.lexer, p.current.pos.offset, "Invalid Token: %w", p.current.text)
+        parse_error(p.current.pos, "Invalid Token: %w", p.current.text)
         return nil
     }
 }

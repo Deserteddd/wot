@@ -6,8 +6,10 @@ vars: map[string]Var
 
 Var :: struct {
     type: Type,
-    value: Value
+    value: Value,
+    depth: int
 }
+
 
 Type :: enum {
     Float,
@@ -51,14 +53,13 @@ binary_op_from_stmt_type :: proc(t: StmtType) -> (op: Binary_Op, ok: bool) {
     return
 }
 
-run :: proc(stmts: []^Stmt) {
+run :: proc(stmts: []^Stmt, depth := 0) {
     vars = make(map[string]Var)
-
     for stmt in stmts {
         #partial switch stmt.type {
             case .Assign:
                 rhs := eval(stmt.value^)
-                vars[stmt.id] = Var{type = value_type(rhs), value = rhs}
+                vars[stmt.id] = Var{type = value_type(rhs), value = rhs, depth = depth}
 
             case .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
                 old_var, exists := vars[stmt.id]
@@ -81,6 +82,7 @@ run :: proc(stmts: []^Stmt) {
 
             case .Print:
                 fmt.println(eval(stmt.value^))
+            
         }
     }
 }
