@@ -7,7 +7,6 @@ vars: map[string]Var
 Var :: struct {
     type: Type,
     value: Value,
-    depth: int
 }
 
 
@@ -25,7 +24,7 @@ Value :: union {
     bool
 }
 
-value_type :: proc(v: Value) -> Type {
+value_type :: proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
         case int:
             return .Int
@@ -39,9 +38,9 @@ value_type :: proc(v: Value) -> Type {
     panic("invalid value type")
 }
 
-binary_op_from_stmt_type :: proc(t: StmtType) -> (op: Binary_Op, ok: bool) {
+binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
     ok = true
-    #partial switch t {
+    #partial switch aop {
         case .AddEq: op = .Add
         case .SubEq: op = .Sub
         case .MulEq: op = .Mul
@@ -53,12 +52,30 @@ binary_op_from_stmt_type :: proc(t: StmtType) -> (op: Binary_Op, ok: bool) {
     return
 }
 
-run :: proc(stmts: []^Stmt, depth := 0) {
+run :: proc(stmts: []^Stmt) {
     for stmt in stmts {
         #partial switch &s in stmt {
             case AssignStmt:
                 rhs := eval(s.value^)
-                vars[s.id.text] = Var{type = value_type(rhs), value = rhs, depth = depth}
+                if s.op == .Assign {
+                    vars[s.id.text] = Var{type = value_type(rhs), value = rhs}
+                } else {
+                    old_var, exists := vars[s.id.text]
+                    if !exists {
+                        panic("Undefined identifier in compound assignment")
+                    }
+                    rhs := eval(s.value^)
+                    op, op_ok := binary_op_from_assign_op(s.op)
+                    if !op_ok {
+                        panic("Invalid compound assignment operator")
+                    }
+                    value, ok := apply_op(op, old_var.value, rhs)
+                    if !ok {
+                        panic("Invalid compound assignment operands")
+                    }
+
+                    vars[s.id.text] = Var{type = value_type(value), value = value}
+                }
             case PrintStmt:
                 fmt.println(eval(s^))
             case IfStmt:
@@ -69,9 +86,15 @@ run :: proc(stmts: []^Stmt, depth := 0) {
                     } else {
                         run(cast([]^Stmt)s.else_body)
                     }
-                } else {
-                    panic("If-condition must evaluate to bool")
-                }
+                } else do panic("If-condition must evaluate to bool")
+            case WhileStmt:
+                cond := eval(s.condition^)
+                if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
+                    for bool_val {
+                        run(cast([]^Stmt)s.body)
+                        bool_val = eval(s.condition^).(bool)
+                    }
+                } else do panic("While-condition must evaluate to bool")
         }
     }
 }
@@ -100,13 +123,47 @@ eval :: proc(e: Expr) -> Value {
                 panic("Invalid operands for binary operation")
             }
             result = val
+        case UnaryExpr:
+            val, ok := apply_unary_op(v.op, eval(v.expr^))
+            if !ok {
+                panic("Invalid operand for unary operation")
+            }
+            result = val
         case:
             panic("Invalid expression")
     }
     return result
 }
 
-apply_int_op :: proc(op: Binary_Op, a, b: int) -> (val: Value, ok: bool) {
+apply_unary_op :: proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
+    ok = true
+    switch op {
+        case .Not:
+            bool_val, bool_val_ok := v.(bool);
+            if !bool_val_ok {
+                fmt.eprintfln("Not-operator can only be applied to boolean expression")
+                ok = false
+            } else {
+                val = !bool_val
+            }
+        case .Sub:
+            #partial switch value in v {
+                case f64:
+                    val = -value
+                case int:
+                    val = -value
+                case:
+                    fmt.eprintln("Sub-operator can only be applied to numeric types")
+                    ok = false
+            }
+        case .Invalid:
+            panic("Invalid expression")
+
+    }
+    return
+}
+
+apply_int_op :: proc(op: BinaryOp, a, b: int) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .Add: val = a + b
@@ -127,7 +184,7 @@ apply_int_op :: proc(op: Binary_Op, a, b: int) -> (val: Value, ok: bool) {
     return
 }
 
-apply_float_op :: proc(op: Binary_Op, a, b: f64) -> (val: Value, ok: bool) {
+apply_float_op :: proc(op: BinaryOp, a, b: f64) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .Add: val = a + b
@@ -147,7 +204,7 @@ apply_float_op :: proc(op: Binary_Op, a, b: f64) -> (val: Value, ok: bool) {
     return
 }
 
-apply_bool_op :: proc(op: Binary_Op, a, b: bool) -> (val: Value, ok: bool) {
+apply_bool_op :: proc(op: BinaryOp, a, b: bool) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .And:      val = a && b
@@ -161,7 +218,7 @@ apply_bool_op :: proc(op: Binary_Op, a, b: bool) -> (val: Value, ok: bool) {
     return
 }
 
-apply_op :: proc(op: Binary_Op, v1, v2: Value) -> (val: Value, ok: bool) {
+apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
     #partial switch left in v1 {
         case int:
             right, right_ok := v2.(int)

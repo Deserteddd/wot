@@ -60,6 +60,7 @@ TokenKind :: enum u32 {
     
     If,
     Else,
+    While,
     Return,
     True,
     False,
@@ -73,5 +74,6 @@ keywords: map[string]TokenKind = {
     "true"    = .True,
     "false"   = .False,
     "print"   = .Print,
-    "else"    = .Else
+    "else"    = .Else,
+    "while"   = .While
 }

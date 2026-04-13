@@ -8,17 +8,6 @@ Program :: struct {
     statements: []Stmt
 }
 
-StmtType :: enum {
-    Assign,
-    AddEq,
-    SubEq,
-    MulEq,
-    DivEq,
-    ModEq,
-    Return,
-    Print,
-}
-
 
 Stmt :: union {
     AssignStmt,
@@ -70,9 +59,10 @@ Expr :: union {
     BoolExpr,
     IdentifierExpr,
     BinaryExpr,
+    UnaryExpr,
 }
 
-Binary_Op :: enum {
+BinaryOp :: enum {
     Invalid,
     Add,
     Sub,
@@ -89,6 +79,12 @@ Binary_Op :: enum {
     Gt_Eq,
 }
 
+UnaryOp :: enum {
+    Invalid,
+    Not,
+    Sub
+}
+
 IntExpr         :: distinct int
 FloatExpr       :: distinct f64
 BoolExpr        :: distinct bool
@@ -96,9 +92,14 @@ StringExpr      :: distinct string
 IdentifierExpr  :: distinct string
 
 BinaryExpr :: struct {
-    op: Binary_Op,
+    op: BinaryOp,
     left:  ^Expr,
     right: ^Expr,
+}
+
+UnaryExpr :: struct {
+    op: UnaryOp,
+    expr: ^Expr
 }
 
 Parser :: struct {
@@ -156,6 +157,8 @@ parse_statement :: proc(p: ^Parser, loc := #caller_location) -> ^Stmt {
             return parse_keyword_stmt(p)
         case .If:
             return parse_if_stmt(p)
+        case .While:
+            return parse_while_stmt(p)
         case:
             parse_error(p.current.pos, "Unexpected token: %w", p.current.text, loc = loc)
             return nil
@@ -169,9 +172,9 @@ parse_keyword_stmt :: proc(p: ^Parser) -> ^Stmt {
     advance(p) // Consume keyword
     #partial switch keyword.kind {
         case .Return:
-            stmt^ = ReturnStmt (parse_expression(p))
+            stmt^ = ReturnStmt(parse_expression(p))
         case .Print:
-            stmt^ = PrintStmt (parse_expression(p))
+            stmt^ = PrintStmt(parse_expression(p))
         case:
             parse_error(p.current.pos, "Not implemented: %v", keyword)
             return nil
@@ -198,6 +201,21 @@ parse_if_stmt :: proc(p: ^Parser) -> ^Stmt {
         condition = condition,
         main_body = BlockStmt(body),
         else_body = BlockStmt(else_body)
+    }
+    return stmt
+}
+
+parse_while_stmt :: proc(p: ^Parser) -> ^Stmt {
+    advance(p) // Consume keyword
+    condition := parse_expression(p)
+    skip_newline(p)
+    advance(p) // Consume {
+    skip_newline(p)
+    body := parse_block_stmt(p)
+    stmt := new(Stmt)
+    stmt^ = WhileStmt {
+        condition = condition,
+        body      = BlockStmt(body)
     }
     return stmt
 }
@@ -360,12 +378,12 @@ parse_additive :: proc(p: ^Parser) -> ^Expr {
 }
 
 parse_multiplicative :: proc(p: ^Parser) -> ^Expr {
-    left := parse_factor(p)
+    left := parse_unary(p)
     for p.current.kind == .Mul || p.current.kind == .Div || p.current.kind == .Mod {
         op_token := p.current
         advance(p)
 
-        right := parse_factor(p)
+        right := parse_unary(p)
         node := new(Expr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
@@ -377,6 +395,26 @@ parse_multiplicative :: proc(p: ^Parser) -> ^Expr {
     }
 
     return left
+}
+
+parse_unary :: proc(p: ^Parser) -> ^Expr {
+    if p.current.kind == .Sub ||   // -x
+       p.current.kind == .Not {   // !x
+
+        op_token := p.current
+        advance(p)
+
+        operand := parse_unary(p) // recursion = right associative
+
+        node := new(Expr)
+        node^ = UnaryExpr{
+            op = unary_op_token_kind(op_token.kind),
+            expr = operand,
+        }
+        return node
+    }
+
+    return parse_factor(p)
 }
 
 parse_factor :: proc(p: ^Parser) -> ^Expr {
@@ -484,7 +522,7 @@ is_declared :: proc(p: ^Parser, name: string) -> bool {
     return false
 }
 
-op_token_kind :: proc(t: TokenKind) -> Binary_Op {
+op_token_kind :: proc(t: TokenKind) -> BinaryOp {
     #partial switch t {
         case .Add: return .Add
         case .Sub: return .Sub
@@ -503,12 +541,20 @@ op_token_kind :: proc(t: TokenKind) -> Binary_Op {
     }
 }
 
+unary_op_token_kind :: proc(t: TokenKind) -> UnaryOp {
+    #partial switch t {
+        case .Not: return .Not
+        case .Sub: return .Sub
+        case: return .Invalid
+    }
+}
+
 is_assign_token :: proc(t: TokenKind) -> bool {
     return t == .Eq || t == .AddEq || t == .SubEq || 
     t == .MulEq || t == .DivEq || t == .ModEq
 }
 
-to_string_binary_op :: proc(op: Binary_Op) -> string {
+to_string_binary_op :: proc(op: BinaryOp) -> string {
     switch op {
         case .Invalid: return "INVALID"
         case .Add: return "+"
