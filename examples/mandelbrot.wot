@@ -6,7 +6,7 @@ while y <= 1.0 {
         zx = 0.0
         zy = 0.0
         iter = 0
-        max_iter = 500
+        max_iter = 100
 
         while (zx*zx + zy*zy <= 4.0) && (iter < max_iter) {
             xtemp = zx*zx - zy*zy + x

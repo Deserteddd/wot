@@ -4,13 +4,6 @@ import "core:fmt"
 
 vars: map[string]Var
 
-builtin: []string = {
-    "print",
-    "println",
-    "printf",
-    "printfln",
-}
-
 Var :: struct {
     type: Type,
     value: Value,
@@ -152,11 +145,11 @@ binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
     return
 }
 
-run :: proc(stmts: []^Stmt) {
+run :: proc(stmts: []Stmt) {
     for stmt in stmts {
         #partial switch &s in stmt {
             case AssignStmt:
-                rhs := eval(s.value^)
+                rhs := eval(s.value)
                 if s.op == .Assign {
                     vars[s.id.text] = Var{type = value_type(rhs), value = rhs}
                 } else {
@@ -182,14 +175,14 @@ run :: proc(stmts: []^Stmt) {
                     case "print":
                         args_evaled := make([]Value, len(s.args), context.temp_allocator)
                         for arg, i in s.args {
-                            args_evaled[i] = eval(arg^)
+                            args_evaled[i] = eval(arg)
                         }
                         print_values(args_evaled, false)
 
                     case "println":
                         args_evaled := make([]Value, len(s.args), context.temp_allocator)
                         for arg, i in s.args {
-                            args_evaled[i] = eval(arg^)
+                            args_evaled[i] = eval(arg)
                         }
                         print_values(args_evaled, true)
 
@@ -200,7 +193,7 @@ run :: proc(stmts: []^Stmt) {
 
                         args_evaled := make([]Value, len(s.args), context.temp_allocator)
                         for arg, i in s.args {
-                            args_evaled[i] = eval(arg^)
+                            args_evaled[i] = eval(arg)
                         }
 
                         format, format_ok := args_evaled[0].(string)
@@ -217,7 +210,7 @@ run :: proc(stmts: []^Stmt) {
 
                         args_evaled := make([]Value, len(s.args), context.temp_allocator)
                         for arg, i in s.args {
-                            args_evaled[i] = eval(arg^)
+                            args_evaled[i] = eval(arg)
                         }
 
                         format, format_ok := args_evaled[0].(string)
@@ -232,20 +225,20 @@ run :: proc(stmts: []^Stmt) {
                         panic(fmt.tprintf("Unknown builtin call: %s", s.name))
                 }
             case IfStmt:
-                cond := eval(s.condition^)
+                cond := eval(s.condition)
                 if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
                     if bool_val {
-                        run(cast([]^Stmt)s.main_body)
+                        run(cast([]Stmt)s.main_body)
                     } else {
-                        run(cast([]^Stmt)s.else_body)
+                        run(cast([]Stmt)s.else_body)
                     }
                 } else do panic("If-condition must evaluate to bool")
             case WhileStmt:
-                cond := eval(s.condition^)
+                cond := eval(s.condition)
                 if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
                     for bool_val {
-                        run(cast([]^Stmt)s.body)
-                        bool_val = eval(s.condition^).(bool)
+                        run(cast([]Stmt)s.body)
+                        bool_val = eval(s.condition).(bool)
                     }
                 } else do panic("While-condition must evaluate to bool")
         }
@@ -270,14 +263,14 @@ eval :: proc(e: Expr) -> Value {
                 panic("Undeclared name past parser")
             }
             result = variable.value
-        case BinaryExpr:
-            val, ok := apply_op(v.op, eval(v.left^), eval(v.right^))
+        case ^BinaryExpr:
+            val, ok := apply_op(v.op, eval(v.left), eval(v.right))
             if !ok {
                 panic("Invalid operands for binary operation")
             }
             result = val
-        case UnaryExpr:
-            val, ok := apply_unary_op(v.op, eval(v.expr^))
+        case ^UnaryExpr:
+            val, ok := apply_unary_op(v.op, eval(v.expr))
             if !ok {
                 panic("Invalid operand for unary operation")
             }

@@ -22,29 +22,29 @@ Stmt :: union {
 AssignStmt :: struct {
     op: AssignOp,
     id: Token,
-    value: ^Expr
+    value: Expr
 }
 
-ReturnStmt :: distinct ^Expr
+ReturnStmt :: distinct Expr
 
-PrintStmt :: distinct ^Expr
+PrintStmt :: distinct Expr
 
 IfStmt :: struct {
-    condition: ^Expr,
+    condition: Expr,
     main_body,
     else_body: BlockStmt
 }
 
-BlockStmt :: distinct []^Stmt
+BlockStmt :: distinct []Stmt
 
 WhileStmt :: struct {
-    condition: ^Expr,
+    condition: Expr,
     body: BlockStmt
 }
 
 CallStmt :: struct {
     name: string,
-    args: []^Expr
+    args: []Expr
 }
 
 AssignOp :: enum {
@@ -63,8 +63,8 @@ Expr :: union {
     StringExpr,
     BoolExpr,
     IdentifierExpr,
-    BinaryExpr,
-    UnaryExpr,
+    ^BinaryExpr,
+    ^UnaryExpr,
 }
 
 BinaryOp :: enum {
@@ -98,13 +98,13 @@ IdentifierExpr  :: distinct string
 
 BinaryExpr :: struct {
     op: BinaryOp,
-    left:  ^Expr,
-    right: ^Expr,
+    left:  Expr,
+    right: Expr,
 }
 
 UnaryExpr :: struct {
     op: UnaryOp,
-    expr: ^Expr
+    expr: Expr
 }
 
 Parser :: struct {
@@ -128,8 +128,8 @@ advance :: proc(p: ^Parser) {
     p.current = scan_token(p.lexer)
 }
 
-parse_program :: proc(p: ^Parser) -> []^Stmt {
-    stmts: [dynamic]^Stmt
+parse_program :: proc(p: ^Parser) -> []Stmt {
+    stmts: [dynamic]Stmt
 
     for p.current.kind != .EOF {
         stmt := parse_statement(p)
@@ -152,7 +152,7 @@ parse_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_location)
 	fmt.eprintf("\n")
 }
 
-parse_statement :: proc(p: ^Parser, loc := #caller_location) -> ^Stmt {
+parse_statement :: proc(p: ^Parser, loc := #caller_location) -> Stmt {
     defer advance(p) //Consume newline or semicolon
     #partial switch p.current.kind {
         case .Id:
@@ -170,13 +170,13 @@ parse_statement :: proc(p: ^Parser, loc := #caller_location) -> ^Stmt {
 }
 
 
-parse_keyword_stmt :: proc(p: ^Parser) -> ^Stmt {
+parse_keyword_stmt :: proc(p: ^Parser) -> Stmt {
     keyword := p.current
-    stmt := new(Stmt)
+    stmt: Stmt
     advance(p) // Consume keyword
     #partial switch keyword.kind {
         case .Return:
-            stmt^ = ReturnStmt(parse_expression(p))
+            stmt = ReturnStmt(parse_expression(p))
         case:
             parse_error(p.current.pos, "Not implemented: %v", keyword)
             return nil
@@ -184,22 +184,21 @@ parse_keyword_stmt :: proc(p: ^Parser) -> ^Stmt {
     return stmt
 }
 
-parse_if_stmt :: proc(p: ^Parser) -> ^Stmt {
+parse_if_stmt :: proc(p: ^Parser) -> Stmt {
     advance(p)
     condition := parse_expression(p)
     skip_newline(p)
     advance(p) // Consume {
     skip_newline(p)
     body := parse_block_stmt(p)
-    else_body: []^Stmt
+    else_body: []Stmt
     if p.current.kind == .Else {
         advance(p) // Consume ELSE
         advance(p) // Consume {
         skip_newline(p)
         else_body = parse_block_stmt(p)
     }
-    stmt := new(Stmt)
-    stmt^ = IfStmt {
+    stmt := IfStmt {
         condition = condition,
         main_body = BlockStmt(body),
         else_body = BlockStmt(else_body)
@@ -207,7 +206,7 @@ parse_if_stmt :: proc(p: ^Parser) -> ^Stmt {
     return stmt
 }
 
-parse_while_stmt :: proc(p: ^Parser) -> ^Stmt {
+parse_while_stmt :: proc(p: ^Parser) -> Stmt {
     advance(p) // Consume keyword
     condition := parse_expression(p)
     skip_newline(p)
@@ -218,15 +217,14 @@ parse_while_stmt :: proc(p: ^Parser) -> ^Stmt {
     advance(p) // Consume {
     skip_newline(p)
     body := parse_block_stmt(p)
-    stmt := new(Stmt)
-    stmt^ = WhileStmt {
+    stmt := WhileStmt {
         condition = condition,
         body      = BlockStmt(body)
     }
     return stmt
 }
 
-parse_block_stmt :: proc(p: ^Parser) -> []^Stmt {
+parse_block_stmt :: proc(p: ^Parser) -> []Stmt {
     if p.current.kind == .CloseBrace do return nil
     stmts := parse_program(p)
     advance(p) // consume }
@@ -234,10 +232,10 @@ parse_block_stmt :: proc(p: ^Parser) -> []^Stmt {
     return stmts
 }
 
-parse_identifier_stmt :: proc(p: ^Parser) -> ^Stmt {
+parse_identifier_stmt :: proc(p: ^Parser) -> Stmt {
     id := p.current
     advance(p)
-    stmt: ^Stmt
+    stmt: Stmt
     #partial switch p.current.kind {
     case .OpenParen:
         stmt = parse_call(p, id)
@@ -249,8 +247,8 @@ parse_identifier_stmt :: proc(p: ^Parser) -> ^Stmt {
     return stmt
 }
 
-parse_call :: proc(p: ^Parser, id: Token) -> ^Stmt {
-    args: [dynamic]^Expr
+parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
+    args: [dynamic]Expr
     advance(p)
     if p.current.kind != .CloseParen {
         for {
@@ -274,23 +272,21 @@ parse_call :: proc(p: ^Parser, id: Token) -> ^Stmt {
             }
         }
     }
-    stmt := new(Stmt)
-    stmt^ = CallStmt {
+    stmt := CallStmt {
         name = id.text,
         args = args[:]
     }
     return stmt
 }
 
-parse_assignment :: proc(p: ^Parser, id: Token) -> ^Stmt {
+parse_assignment :: proc(p: ^Parser, id: Token) -> Stmt {
     op_token := p.current
     if !is_assign_token(op_token.kind) {
         parse_error(p.current.pos, "Invalid assignment token: %v", p.current.text)
     }
     advance(p) // consume assignment operator
     value := parse_expression(p)
-    stmt := new(Stmt)
-    stmt^ = AssignStmt {
+    stmt := AssignStmt {
         op = get_assign_op(op_token),
         id = id,
         value = value
@@ -315,14 +311,14 @@ get_assign_op :: proc(token: Token) -> AssignOp{
 }
 
 
-parse_expression :: proc(p: ^Parser) -> ^Expr {
+parse_expression :: proc(p: ^Parser) -> Expr {
     left := parse_and(p)
     for p.current.kind == .Or {
         op_token := p.current
         advance(p)
 
         right := parse_and(p)
-        node := new(Expr)
+        node := new(BinaryExpr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
             left = left,
@@ -335,14 +331,14 @@ parse_expression :: proc(p: ^Parser) -> ^Expr {
     return left
 }
 
-parse_and :: proc(p: ^Parser) -> ^Expr {
+parse_and :: proc(p: ^Parser) -> Expr {
     left := parse_eq(p)
     for p.current.kind == .And {
         op_token := p.current
         advance(p)
 
         right := parse_eq(p)
-        node := new(Expr)
+        node := new(BinaryExpr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
             left = left,
@@ -355,14 +351,14 @@ parse_and :: proc(p: ^Parser) -> ^Expr {
     return left
 }
 
-parse_eq :: proc(p: ^Parser) -> ^Expr {
+parse_eq :: proc(p: ^Parser) -> Expr {
     left := parse_cmp(p)
     for p.current.kind == .CmpEq || p.current.kind == .NotEq {
         op_token := p.current
         advance(p)
 
         right := parse_cmp(p)
-        node := new(Expr)
+        node := new(BinaryExpr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
             left = left,
@@ -375,7 +371,7 @@ parse_eq :: proc(p: ^Parser) -> ^Expr {
     return left
 }
 
-parse_cmp :: proc(p: ^Parser) -> ^Expr {
+parse_cmp :: proc(p: ^Parser) -> Expr {
     left := parse_additive(p)
     for p.current.kind == .Lt || p.current.kind == .Gt || 
         p.current.kind == .Gt_Eq || p.current.kind == .Lt_Eq {
@@ -383,7 +379,7 @@ parse_cmp :: proc(p: ^Parser) -> ^Expr {
         advance(p)
 
         right := parse_additive(p)
-        node := new(Expr)
+        node := new(BinaryExpr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
             left = left,
@@ -396,14 +392,14 @@ parse_cmp :: proc(p: ^Parser) -> ^Expr {
     return left
 }
 
-parse_additive :: proc(p: ^Parser) -> ^Expr {
+parse_additive :: proc(p: ^Parser) -> Expr {
     left := parse_multiplicative(p)
     for p.current.kind == .Add || p.current.kind == .Sub {
         op_token := p.current
         advance(p)
 
         right := parse_multiplicative(p)
-        node := new(Expr)
+        node := new(BinaryExpr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
             left = left,
@@ -416,14 +412,14 @@ parse_additive :: proc(p: ^Parser) -> ^Expr {
     return left
 }
 
-parse_multiplicative :: proc(p: ^Parser) -> ^Expr {
+parse_multiplicative :: proc(p: ^Parser) -> Expr {
     left := parse_unary(p)
     for p.current.kind == .Mul || p.current.kind == .Div || p.current.kind == .Mod {
         op_token := p.current
         advance(p)
 
         right := parse_unary(p)
-        node := new(Expr)
+        node := new(BinaryExpr)
         node^ = BinaryExpr{
             op = op_token_kind(op_token.kind),
             left = left,
@@ -436,7 +432,7 @@ parse_multiplicative :: proc(p: ^Parser) -> ^Expr {
     return left
 }
 
-parse_unary :: proc(p: ^Parser) -> ^Expr {
+parse_unary :: proc(p: ^Parser) -> Expr {
     if p.current.kind == .Sub ||   // -x
        p.current.kind == .Not {   // !x
 
@@ -445,7 +441,7 @@ parse_unary :: proc(p: ^Parser) -> ^Expr {
 
         operand := parse_unary(p) // recursion = right associative
 
-        node := new(Expr)
+        node := new(UnaryExpr)
         node^ = UnaryExpr{
             op = unary_op_token_kind(op_token.kind),
             expr = operand,
@@ -456,37 +452,32 @@ parse_unary :: proc(p: ^Parser) -> ^Expr {
     return parse_factor(p)
 }
 
-parse_factor :: proc(p: ^Parser) -> ^Expr {
+parse_factor :: proc(p: ^Parser) -> Expr {
     #partial switch p.current.kind {
     case .Int:
-        node := new(Expr)
         val, ok := strconv.parse_int(p.current.text); assert(ok)
-        node^ = IntExpr(val)
+        node := IntExpr(val)
         advance(p)
         return node
 
     case .Float:
-        node := new(Expr)
         val, ok := strconv.parse_f64(p.current.text); assert(ok)
-        node^ = FloatExpr(val)
+        node := FloatExpr(val)
         advance(p)
         return node
 
     case .String:
-        node := new(Expr)
-        node^ = StringExpr(p.current.text)
+        node := StringExpr(p.current.text)
         advance(p)
         return node
     
     case .True, .False:
-        node := new(Expr)
-        node^ = BoolExpr(p.current.kind == .True ? true : false)
+        node := BoolExpr(p.current.kind == .True ? true : false)
         advance(p)
         return node
 
     case .Id:
-        node := new(Expr)
-        node^ = IdentifierExpr(p.current.text)
+        node := IdentifierExpr(p.current.text)
         advance(p)
         return node
 
@@ -508,44 +499,44 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
     }
 }
 
-println_statement :: proc(s: Stmt) {
-    print_statement(s)
-    fmt.println()
-}
+// println_statement :: proc(s: Stmt) {
+//     print_statement(s)
+//     fmt.println()
+// }
 
-print_statement :: proc(s: Stmt) {
-    print_expression :: proc(e: ^Expr) {
-        bin_expr, bin_expr_ok := e.(BinaryExpr)
-        if bin_expr_ok {
-            fmt.printf("(")
-            print_expression(bin_expr.left)
-            fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
-            print_expression(bin_expr.right)
-            fmt.printf(")")
-        } else {
-            fmt.printf("%v", e^)
-        }
+// print_statement :: proc(s: Stmt) {
+//     print_expression :: proc(e: Expr) {
+//         bin_expr, bin_expr_ok := e.(^BinaryExpr)
+//         if bin_expr_ok {
+//             fmt.printf("(")
+//             print_expression(bin_expr.left)
+//             fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
+//             print_expression(bin_expr.right)
+//             fmt.printf(")")
+//         } else {
+//             fmt.printf("%v", e^)
+//         }
         
-    }
-    #partial switch stmt in s {
-        case AssignStmt:
-            fmt.print(stmt.id.text, stmt.op, "")
-            print_expression(stmt.value)
-        case IfStmt:
-            fmt.printf("If: ")
-            print_expression(stmt.condition)
-            fmt.println()
-            for sub_stmt in stmt.main_body do println_statement(sub_stmt^)
-            if stmt.else_body != nil {
-                fmt.printf("Else:\n")
-                for sub_stmt in stmt.else_body do println_statement(sub_stmt^)
-            }
-            fmt.println("END")
-        case ReturnStmt:
-            fmt.print("RETURN ")
-            print_expression(cast(^Expr)stmt)
-    }
-}
+//     }
+//     #partial switch stmt in s {
+//         case AssignStmt:
+//             fmt.print(stmt.id.text, stmt.op, "")
+//             print_expression(stmt.value)
+//         case IfStmt:
+//             fmt.printf("If: ")
+//             print_expression(stmt.condition)
+//             fmt.println()
+//             for sub_stmt in stmt.main_body do println_statement(sub_stmt^)
+//             if stmt.else_body != nil {
+//                 fmt.printf("Else:\n")
+//                 for sub_stmt in stmt.else_body do println_statement(sub_stmt^)
+//             }
+//             fmt.println("END")
+//         case ReturnStmt:
+//             fmt.print("RETURN ")
+//             print_expression(cast(^Expr)stmt)
+//     }
+// }
 
 op_token_kind :: proc(t: TokenKind) -> BinaryOp {
     #partial switch t {
