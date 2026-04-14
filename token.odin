@@ -1,6 +1,8 @@
 #+feature dynamic-literals
 package wot
 
+import "core:fmt"
+
 Token :: struct {
 	kind:   TokenKind,
     text:   string,
@@ -73,7 +75,7 @@ keywords: map[string]TokenKind = {
     "if"      = .If,
     "true"    = .True,
     "false"   = .False,
-    "print"   = .Print,
     "else"    = .Else,
     "while"   = .While
 }
+

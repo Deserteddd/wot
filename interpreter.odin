@@ -4,6 +4,13 @@ import "core:fmt"
 
 vars: map[string]Var
 
+builtin: []string = {
+    "print",
+    "println",
+    "printf",
+    "printfln",
+}
+
 Var :: struct {
     type: Type,
     value: Value,
@@ -22,6 +29,99 @@ Value :: union {
     i64,
     string,
     bool
+}
+
+format_value_with_verb :: proc(v: Value, verb: byte) -> string {
+    #partial switch value in v {
+        case i64:
+            switch verb {
+                case 'v': return fmt.tprintf("%v", value)
+                case 'd', 'i': return fmt.tprintf("%d", value)
+                case 'b': return fmt.tprintf("%b", value)
+                case 'o': return fmt.tprintf("%o", value)
+                case 'x': return fmt.tprintf("%x", value)
+                case 'X': return fmt.tprintf("%X", value)
+            }
+        case f64:
+            switch verb {
+                case 'v': return fmt.tprintf("%v", value)
+                case 'f': return fmt.tprintf("%f", value)
+                case 'e': return fmt.tprintf("%e", value)
+                case 'E': return fmt.tprintf("%E", value)
+                case 'g': return fmt.tprintf("%g", value)
+                case 'G': return fmt.tprintf("%G", value)
+            }
+        case string:
+            switch verb {
+                case 'v', 's': return fmt.tprintf("%s", value)
+                case 'q': return fmt.tprintf("%q", value)
+            }
+        case bool:
+            switch verb {
+                case 'v', 't': return fmt.tprintf("%t", value)
+            }
+    }
+
+    panic(fmt.tprintf("Unsupported format verb '%%%c' for argument value", verb))
+}
+
+printf_values :: proc(format: string, args: []Value) {
+    arg_i := 0
+    segment_start := 0
+    i := 0
+
+    for i < len(format) {
+        if format[i] != '%' {
+            i += 1
+            continue
+        }
+
+        if i > segment_start {
+            fmt.print(format[segment_start:i])
+        }
+
+        if i+1 >= len(format) {
+            panic("printf format string ends with '%' and missing verb")
+        }
+
+        verb := format[i+1]
+        if verb == '%' {
+            fmt.print("%")
+            i += 2
+            segment_start = i
+            continue
+        }
+
+        if arg_i >= len(args) {
+            panic("Not enough arguments for printf format string")
+        }
+
+        fmt.print(format_value_with_verb(args[arg_i], verb))
+        arg_i += 1
+        i += 2
+        segment_start = i
+    }
+
+    if segment_start < len(format) {
+        fmt.print(format[segment_start:])
+    }
+
+    if arg_i < len(args) {
+        panic("Too many arguments for printf format string")
+    }
+}
+
+print_values :: proc(args: []Value, newline: bool) {
+    for value, i in args {
+        if i > 0 {
+            fmt.print(" ")
+        }
+        fmt.print(format_value_with_verb(value, 'v'))
+    }
+
+    if newline {
+        fmt.println()
+    }
 }
 
 value_type :: proc(v: Value, loc := #caller_location) -> Type {
@@ -54,6 +154,7 @@ binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
 
 run :: proc(stmts: []^Stmt) {
     for stmt in stmts {
+        defer free_all(context.temp_allocator)
         #partial switch &s in stmt {
             case AssignStmt:
                 rhs := eval(s.value^)
@@ -76,8 +177,60 @@ run :: proc(stmts: []^Stmt) {
 
                     vars[s.id.text] = Var{type = value_type(value), value = value}
                 }
-            case PrintStmt:
-                fmt.println(eval(s^))
+            case CallStmt:
+                switch s.name {
+                    case "print":
+                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
+                        for arg, i in s.args {
+                            args_evaled[i] = eval(arg^)
+                        }
+                        print_values(args_evaled, false)
+
+                    case "println":
+                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
+                        for arg, i in s.args {
+                            args_evaled[i] = eval(arg^)
+                        }
+                        print_values(args_evaled, true)
+
+                    case "printf":
+                        if len(s.args) == 0 {
+                            panic("printf expects at least one argument (format string)")
+                        }
+
+                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
+                        for arg, i in s.args {
+                            args_evaled[i] = eval(arg^)
+                        }
+
+                        format, format_ok := args_evaled[0].(string)
+                        if !format_ok {
+                            panic("First argument of printf must be a string")
+                        }
+
+                        printf_values(format, args_evaled[1:])
+
+                    case "printfln":
+                        if len(s.args) == 0 {
+                            panic("printfln expects at least one argument (format string)")
+                        }
+
+                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
+                        for arg, i in s.args {
+                            args_evaled[i] = eval(arg^)
+                        }
+
+                        format, format_ok := args_evaled[0].(string)
+                        if !format_ok {
+                            panic("First argument of printfln must be a string")
+                        }
+
+                        printf_values(format, args_evaled[1:])
+                        fmt.println()
+
+                    case:
+                        panic(fmt.tprintf("Unknown builtin call: %s", s.name))
+                }
             case IfStmt:
                 cond := eval(s.condition^)
                 if bool_val, bool_val_ok := cond.(bool); bool_val_ok {

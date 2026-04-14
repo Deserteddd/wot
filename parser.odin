@@ -16,6 +16,7 @@ Stmt :: union {
     IfStmt,
     WhileStmt,
     BlockStmt,
+    CallStmt
 }
 
 AssignStmt :: struct {
@@ -41,6 +42,10 @@ WhileStmt :: struct {
     body: BlockStmt
 }
 
+CallStmt :: struct {
+    name: string,
+    args: []^Expr
+}
 
 AssignOp :: enum {
     Invalid,
@@ -105,7 +110,6 @@ UnaryExpr :: struct {
 Parser :: struct {
     lexer: ^Lexer,
     current: Token,
-    names: [dynamic]string
 }
 
 init_parser :: proc(l: ^Lexer, p: ^Parser) {
@@ -153,7 +157,7 @@ parse_statement :: proc(p: ^Parser, loc := #caller_location) -> ^Stmt {
     #partial switch p.current.kind {
         case .Id:
             return parse_identifier_stmt(p)
-        case .Return, .Print:
+        case .Return:
             return parse_keyword_stmt(p)
         case .If:
             return parse_if_stmt(p)
@@ -173,8 +177,6 @@ parse_keyword_stmt :: proc(p: ^Parser) -> ^Stmt {
     #partial switch keyword.kind {
         case .Return:
             stmt^ = ReturnStmt(parse_expression(p))
-        case .Print:
-            stmt^ = PrintStmt(parse_expression(p))
         case:
             parse_error(p.current.pos, "Not implemented: %v", keyword)
             return nil
@@ -209,6 +211,10 @@ parse_while_stmt :: proc(p: ^Parser) -> ^Stmt {
     advance(p) // Consume keyword
     condition := parse_expression(p)
     skip_newline(p)
+    if p.current.kind != .OpenBrace {
+        parse_error(p.current.pos, "Invalid token: %v", p.current.text)
+        fmt.eprintln("Did you mean: While <condition> {")
+    }
     advance(p) // Consume {
     skip_newline(p)
     body := parse_block_stmt(p)
@@ -231,22 +237,55 @@ parse_block_stmt :: proc(p: ^Parser) -> []^Stmt {
 parse_identifier_stmt :: proc(p: ^Parser) -> ^Stmt {
     id := p.current
     advance(p)
-    if p.current.kind == .Eq {
-        if !is_declared(p, id.text) {
-            append(&p.names, id.text)
-        }
-    } else if !is_declared(p, id.text) {
-        parse_error(p.current.pos, "Undeclared name: %w", id)
-        return nil
+    stmt: ^Stmt
+    #partial switch p.current.kind {
+    case .OpenParen:
+        stmt = parse_call(p, id)
+    case .Eq, .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
+        stmt = parse_assignment(p, id)
+    case:
+        parse_error(p.current.pos, "Invalid token: %v", p.current.text)
     }
-    stmt := parse_assignment(p, id)
+    return stmt
+}
+
+parse_call :: proc(p: ^Parser, id: Token) -> ^Stmt {
+    args: [dynamic]^Expr
+    advance(p)
+    if p.current.kind != .CloseParen {
+        for {
+            expr := parse_expression(p)
+            if expr == nil {
+                parse_error(p.current.pos, "Invalid argument in call to '%v'", id.text)
+                return nil
+            }
+            append(&args, expr)
+
+            if p.current.kind == .CloseParen do break
+            if p.current.kind != .Comma {
+                parse_error(p.current.pos, "Expected ',' or ')' after argument in call to '%v'", id.text)
+                return nil
+            }
+
+            advance(p) // consume ','
+            if p.current.kind == .CloseParen {
+                parse_error(p.current.pos, "Trailing comma is not allowed in call to '%v'", id.text)
+                return nil
+            }
+        }
+    }
+    stmt := new(Stmt)
+    stmt^ = CallStmt {
+        name = id.text,
+        args = args[:]
+    }
     return stmt
 }
 
 parse_assignment :: proc(p: ^Parser, id: Token) -> ^Stmt {
     op_token := p.current
     if !is_assign_token(op_token.kind) {
-        parse_error(p.current.pos, "Invalid token: %v", p.current.text)
+        parse_error(p.current.pos, "Invalid assignment token: %v", p.current.text)
     }
     advance(p) // consume assignment operator
     value := parse_expression(p)
@@ -418,7 +457,6 @@ parse_unary :: proc(p: ^Parser) -> ^Expr {
 }
 
 parse_factor :: proc(p: ^Parser) -> ^Expr {
-    // parse_factor_calls += 1
     #partial switch p.current.kind {
     case .Int:
         node := new(Expr)
@@ -447,10 +485,6 @@ parse_factor :: proc(p: ^Parser) -> ^Expr {
         return node
 
     case .Id:
-        if !is_declared(p, p.current.text) {
-            parse_error(p.current.pos, "Undeclared name: %w", p.current.text)
-            return nil
-        }
         node := new(Expr)
         node^ = IdentifierExpr(p.current.text)
         advance(p)
@@ -507,19 +541,10 @@ print_statement :: proc(s: Stmt) {
                 for sub_stmt in stmt.else_body do println_statement(sub_stmt^)
             }
             fmt.println("END")
-        case PrintStmt:
-            fmt.println("PRINT:", stmt^)
-
+        case ReturnStmt:
+            fmt.print("RETURN ")
+            print_expression(cast(^Expr)stmt)
     }
-}
-
-
-
-is_declared :: proc(p: ^Parser, name: string) -> bool {
-    for n in p.names {
-        if n == name do return true
-    }
-    return false
 }
 
 op_token_kind :: proc(t: TokenKind) -> BinaryOp {

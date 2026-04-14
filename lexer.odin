@@ -37,6 +37,11 @@ init_lexer :: proc(l: ^Lexer, src: string, path: string){
     if l.ch == utf8.RUNE_BOM do advance_rune(l) // Skip byte order mark
 }
 
+peek_token :: proc(l: Lexer) -> (token: Token) {
+    l := l
+    return scan_token(&l)
+
+}
 
 scan_token :: proc(l: ^Lexer) -> (token: Token) {
     skip_whitespace(l)
@@ -156,18 +161,64 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
 scan_string :: proc(l: ^Lexer) -> string {
     advance_rune(l)
 	offset := l.offset
+    escaped := false
     for {
         ch := l.ch
         if ch < 0 {
             lex_error(l, l.offset, "String not terminated")
             break
         }
-        advance_rune(l)
-        if ch == '"' {
+
+        if !escaped && ch == '"' {
             break
         }
+
+        if !escaped && ch == '\\' {
+            escaped = true
+        } else {
+            escaped = false
+        }
+
+        advance_rune(l)
     }
-	return string(l.source[offset : l.offset-1])
+
+    raw := string(l.source[offset:l.offset])
+    if l.ch == '"' {
+        advance_rune(l) // consume closing quote
+    }
+
+    out: [dynamic]u8
+    i := 0
+    for i < len(raw) {
+        if raw[i] != '\\' {
+            append(&out, raw[i])
+            i += 1
+            continue
+        }
+
+        if i+1 >= len(raw) {
+            lex_error(l, offset+i, "Invalid escape sequence")
+            append(&out, raw[i])
+            break
+        }
+
+        esc := raw[i+1]
+        switch esc {
+            case 'n': append(&out, byte('\n'))
+            case 't': append(&out, byte('\t'))
+            case 'r': append(&out, byte('\r'))
+            case '\\': append(&out, byte('\\'))
+            case '"': append(&out, byte('"'))
+            case '\'': append(&out, byte('\''))
+            case:
+                lex_error(l, offset+i, "Invalid escape sequence: \\%c", esc)
+                append(&out, esc)
+        }
+
+        i += 2
+    }
+
+	return string(out[:])
 }
 
 
