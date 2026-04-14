@@ -85,7 +85,7 @@ UnaryOp :: enum {
     Sub
 }
 
-IntExpr         :: distinct int
+IntExpr         :: distinct i64
 FloatExpr       :: distinct f64
 BoolExpr        :: distinct bool
 StringExpr      :: distinct string

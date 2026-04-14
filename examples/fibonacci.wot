@@ -1,11 +1,14 @@
 n = 10
 a = 0
 b = 0
-next = 1  
+next = 1
 
-while n > 0:
-    print b
+while n > 0 {
     a = b
     b = next
     next = a + b
     n -= 1
+}
+
+
+print b

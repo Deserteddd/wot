@@ -19,14 +19,14 @@ Type :: enum {
 
 Value :: union {
     f64,
-    int,
+    i64,
     string,
     bool
 }
 
 value_type :: proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
-        case int:
+        case i64:
             return .Int
         case f64:
             return .Float
@@ -104,7 +104,7 @@ eval :: proc(e: Expr) -> Value {
     result: Value
     #partial switch v in e {
         case IntExpr:
-            result = int(v)
+            result = i64(v)
         case FloatExpr:
             result = f64(v)
         case StringExpr:
@@ -150,7 +150,7 @@ apply_unary_op :: proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
             #partial switch value in v {
                 case f64:
                     val = -value
-                case int:
+                case i64:
                     val = -value
                 case:
                     fmt.eprintln("Sub-operator can only be applied to numeric types")
@@ -163,7 +163,7 @@ apply_unary_op :: proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
     return
 }
 
-apply_int_op :: proc(op: BinaryOp, a, b: int) -> (val: Value, ok: bool) {
+apply_int_op :: proc(op: BinaryOp, a, b: i64) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .Add: val = a + b
@@ -220,8 +220,8 @@ apply_bool_op :: proc(op: BinaryOp, a, b: bool) -> (val: Value, ok: bool) {
 
 apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
     #partial switch left in v1 {
-        case int:
-            right, right_ok := v2.(int)
+        case i64:
+            right, right_ok := v2.(i64)
             if right_ok do return apply_int_op(op, left, right)
             else {
                 right_float, right_float_ok := v2.(f64)
@@ -233,7 +233,7 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
             right, right_ok := v2.(f64)
             if right_ok do return apply_float_op(op, left, right)
             else {
-                right_int, right_int_ok := v2.(int)
+                right_int, right_int_ok := v2.(i64)
                 if !right_int_ok do return
                 return apply_float_op(op, left, f64(right_int))
             }
