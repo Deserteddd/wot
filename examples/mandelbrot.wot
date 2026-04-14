@@ -1,0 +1,31 @@
+y = -1.0
+iterations = 0
+while y <= 1.0 {
+    x = -2.0
+    while x <= 1.0 {
+        zx = 0.0
+        zy = 0.0
+        iter = 0
+        max_iter = 500
+
+        while (zx*zx + zy*zy <= 4.0) && (iter < max_iter) {
+            xtemp = zx*zx - zy*zy + x
+            zy = 2.0*zx*zy + y
+            zx = xtemp
+            iter += 1
+			iterations += 1
+        }
+
+        if iter == max_iter {
+            print("#")
+        } else {
+            print(" ")
+        }
+
+        x += 0.0315
+    }
+
+    println()
+    y += 0.05
+}
+println("Total iterations:", iterations)

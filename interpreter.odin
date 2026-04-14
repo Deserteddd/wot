@@ -154,7 +154,6 @@ binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
 
 run :: proc(stmts: []^Stmt) {
     for stmt in stmts {
-        defer free_all(context.temp_allocator)
         #partial switch &s in stmt {
             case AssignStmt:
                 rhs := eval(s.value^)
@@ -165,7 +164,6 @@ run :: proc(stmts: []^Stmt) {
                     if !exists {
                         panic("Undefined identifier in compound assignment")
                     }
-                    rhs := eval(s.value^)
                     op, op_ok := binary_op_from_assign_op(s.op)
                     if !op_ok {
                         panic("Invalid compound assignment operator")
@@ -178,6 +176,8 @@ run :: proc(stmts: []^Stmt) {
                     vars[s.id.text] = Var{type = value_type(value), value = value}
                 }
             case CallStmt:
+
+                defer free_all(context.temp_allocator)
                 switch s.name {
                     case "print":
                         args_evaled := make([]Value, len(s.args), context.temp_allocator)

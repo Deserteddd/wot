@@ -6,7 +6,7 @@ import "core:time"
 import vmem "core:mem/virtual"
 
 main :: proc() {
-    start := time.now(); defer fmt.println("Finished in:", time.since(start))
+    start := time.now()
 
     arena: vmem.Arena
     err := vmem.arena_init_growing(&arena)
@@ -26,7 +26,16 @@ main :: proc() {
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
+    compile_time := time.since(start)
+    fmt.println("--------------------------------------")
+    fmt.printfln("Compiled in: %v", compile_time)
+    fmt.println("--------------------------------------")
+    start = time.now()
     run(program)
+    run_time := time.since(start)
+    fmt.println("--------------------------------------")
+    fmt.printfln("Executed in: %v", run_time)
+    fmt.println("--------------------------------------")
 }
 
 
