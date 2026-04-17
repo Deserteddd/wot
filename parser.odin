@@ -4,9 +4,7 @@ import "core:fmt"
 import "core:strconv"
 import os "core:os/os2"
 
-Program :: struct {
-    statements: []Stmt
-}
+Program :: distinct BlockStmt
 
 
 Stmt :: union {
@@ -30,6 +28,7 @@ ReturnStmt :: distinct Expr
 PrintStmt :: distinct Expr
 
 IfStmt :: struct {
+    pos: Pos,
     condition: Expr,
     main_body,
     else_body: BlockStmt
@@ -43,7 +42,7 @@ WhileStmt :: struct {
 }
 
 CallStmt :: struct {
-    name: string,
+    id: Token,
     args: []Expr
 }
 
@@ -57,7 +56,12 @@ AssignOp :: enum {
     ModEq,
 }
 
-Expr :: union {
+Expr :: struct {
+    pos: Pos,
+    inner: ExprVal
+}
+
+ExprVal :: union {
     IntExpr,
     FloatExpr,
     StringExpr,
@@ -112,6 +116,8 @@ Parser :: struct {
     current: Token,
 }
 
+
+
 init_parser :: proc(l: ^Lexer, p: ^Parser) {
     p.lexer = l
     p.current = scan_token(p.lexer)
@@ -128,7 +134,7 @@ advance :: proc(p: ^Parser) {
     p.current = scan_token(p.lexer)
 }
 
-parse_program :: proc(p: ^Parser) -> []Stmt {
+parse_program :: proc(p: ^Parser) -> Program {
     stmts: [dynamic]Stmt
 
     for p.current.kind != .EOF {
@@ -140,10 +146,10 @@ parse_program :: proc(p: ^Parser) -> []Stmt {
         // println_statement(stmt^)
         append(&stmts, stmt)
         skip_newline(p)
-        if p.current.kind == .CloseBrace do return stmts[:]
+        if p.current.kind == .CloseBrace do return cast(Program)stmts[:]
     }
 
-    return stmts[:]
+    return cast(Program)stmts[:]
 }
 
 parse_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_location) {
@@ -185,13 +191,14 @@ parse_keyword_stmt :: proc(p: ^Parser) -> Stmt {
 }
 
 parse_if_stmt :: proc(p: ^Parser) -> Stmt {
+    pos := p.current.pos
     advance(p)
     condition := parse_expression(p)
     skip_newline(p)
     advance(p) // Consume {
     skip_newline(p)
     body := parse_block_stmt(p)
-    else_body: []Stmt
+    else_body: BlockStmt
     if p.current.kind == .Else {
         advance(p) // Consume ELSE
         advance(p) // Consume {
@@ -199,6 +206,7 @@ parse_if_stmt :: proc(p: ^Parser) -> Stmt {
         else_body = parse_block_stmt(p)
     }
     stmt := IfStmt {
+        pos = pos,
         condition = condition,
         main_body = BlockStmt(body),
         else_body = BlockStmt(else_body)
@@ -211,7 +219,7 @@ parse_while_stmt :: proc(p: ^Parser) -> Stmt {
     condition := parse_expression(p)
     skip_newline(p)
     if p.current.kind != .OpenBrace {
-        parse_error(p.current.pos, "Invalid token: %v", p.current.text)
+        parse_error(p.current.pos, "Unexpected token: %v", p.current.text)
         fmt.eprintln("Did you mean: While <condition> {")
     }
     advance(p) // Consume {
@@ -224,12 +232,12 @@ parse_while_stmt :: proc(p: ^Parser) -> Stmt {
     return stmt
 }
 
-parse_block_stmt :: proc(p: ^Parser) -> []Stmt {
+parse_block_stmt :: proc(p: ^Parser) -> BlockStmt {
     if p.current.kind == .CloseBrace do return nil
     stmts := parse_program(p)
     advance(p) // consume }
 
-    return stmts
+    return BlockStmt(stmts)
 }
 
 parse_identifier_stmt :: proc(p: ^Parser) -> Stmt {
@@ -253,7 +261,7 @@ parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
     if p.current.kind != .CloseParen {
         for {
             expr := parse_expression(p)
-            if expr == nil {
+            if expr.inner == nil {
                 parse_error(p.current.pos, "Invalid argument in call to '%v'", id.text)
                 return nil
             }
@@ -273,7 +281,7 @@ parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
         }
     }
     stmt := CallStmt {
-        name = id.text,
+        id   = id,
         args = args[:]
     }
     return stmt
@@ -325,7 +333,7 @@ parse_expression :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = node
+        left = Expr{left.pos, node}
     }
 
     return left
@@ -345,7 +353,7 @@ parse_and :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = node
+        left = Expr{left.pos, node}
     }
 
     return left
@@ -365,7 +373,7 @@ parse_eq :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = node
+        left = Expr{left.pos, node}
     }
 
     return left
@@ -386,7 +394,7 @@ parse_cmp :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = node
+        left = Expr{left.pos, node}
     }
 
     return left
@@ -406,7 +414,7 @@ parse_additive :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = node
+        left = Expr{left.pos, node}
     }
 
     return left
@@ -426,7 +434,7 @@ parse_multiplicative :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = node
+        left = Expr{left.pos, node}
     }
 
     return left
@@ -446,40 +454,42 @@ parse_unary :: proc(p: ^Parser) -> Expr {
             op = unary_op_token_kind(op_token.kind),
             expr = operand,
         }
-        return node
+        return Expr {op_token.pos, node}
     }
 
     return parse_factor(p)
 }
 
 parse_factor :: proc(p: ^Parser) -> Expr {
+    pos := p.current.pos
     #partial switch p.current.kind {
     case .Int:
         val, ok := strconv.parse_int(p.current.text); assert(ok)
         node := IntExpr(val)
         advance(p)
-        return node
+        return Expr{pos, node}
 
     case .Float:
         val, ok := strconv.parse_f64(p.current.text); assert(ok)
         node := FloatExpr(val)
         advance(p)
-        return node
+        return Expr{pos, node}
+
 
     case .String:
         node := StringExpr(p.current.text)
         advance(p)
-        return node
+        return Expr{pos, node}
     
     case .True, .False:
         node := BoolExpr(p.current.kind == .True ? true : false)
         advance(p)
-        return node
+        return Expr{pos, node}
 
     case .Id:
         node := IdentifierExpr(p.current.text)
         advance(p)
-        return node
+        return Expr{pos, node}
 
     case .OpenParen:
         advance(p) // consume '('
@@ -495,7 +505,7 @@ parse_factor :: proc(p: ^Parser) -> Expr {
 
     case:
         parse_error(p.current.pos, "Invalid Token: %w", p.current.text)
-        return nil
+        return {}
     }
 }
 
@@ -586,6 +596,16 @@ to_string_binary_op :: proc(op: BinaryOp) -> string {
         case .Gt_Eq: return ">="
         case .Or:    return "||"
         case .And:   return "&&"
+    }
+    return ""
+}
+
+to_string_unary_op :: proc(op: UnaryOp) -> string {
+    switch op {
+        case .Invalid: return "INVALID"
+        case .Not: return "!"
+        case .Sub: return "-"
+
     }
     return ""
 }

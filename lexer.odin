@@ -3,6 +3,7 @@ package wot
 import "core:unicode/utf8"
 import "core:unicode"
 import "core:fmt"
+import "core:mem"
 
 Lexer :: struct {
     source:         string,
