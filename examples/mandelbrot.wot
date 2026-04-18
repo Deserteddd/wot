@@ -1,16 +1,16 @@
-y = -1.0
+y = -1
 iterations = 0
-while y <= 1.0 {
-    x = -2.0
-    while x <= 1.0 {
-        zx = 0.0
-        zy = 0.0
+while y <= 1 {
+    x = -2
+    while x <= 1 {
+        zx = 0
+        zy = 0
         iter = 0
         max_iter = 100
 
-        while (zx*zx + zy*zy <= 4.0) && (iter < max_iter) {
+        while (zx*zx + zy*zy <= 4) && (iter < max_iter) {
             xtemp = zx*zx - zy*zy + x
-            zy = 2.0*zx*zy + y
+            zy = 2*zx*zy + y
             zx = xtemp
             iter += 1
 			iterations += 1

@@ -7,7 +7,6 @@ import vmem "core:mem/virtual"
 
 main :: proc() {
     start := time.now()
-
     arena: vmem.Arena
     err := vmem.arena_init_growing(&arena)
     assert(err == .None)

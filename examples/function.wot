@@ -1,0 +1,5 @@
+a: float = 15+5
+b: int
+c := 15.5
+d: bool : false
+e :: "Hello, Agora!"

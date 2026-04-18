@@ -244,6 +244,8 @@ run :: proc(program: Program) {
                         bool_val = eval(s.condition).(bool)
                     }
                 } else do runtime_error(s.condition.pos, "While-condition must evaluate to bool")
+            case BlockStmt:
+                run(auto_cast s)
         }
     }
 }

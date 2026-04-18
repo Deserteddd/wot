@@ -4,10 +4,15 @@ import "core:fmt"
 import "core:strconv"
 import os "core:os/os2"
 
+Parser :: struct {
+    lexer: ^Lexer,
+    current: Token,
+}
+
 Program :: distinct BlockStmt
 
-
 Stmt :: union {
+    DeclrStmt,
     AssignStmt,
     ReturnStmt,
     PrintStmt,
@@ -17,10 +22,27 @@ Stmt :: union {
     CallStmt
 }
 
+DeclrStmt :: struct {
+    const: bool,
+    id: Token,
+    typename: string,
+    value: Expr
+}
+
 AssignStmt :: struct {
     op: AssignOp,
     id: Token,
     value: Expr
+}
+
+AssignOp :: enum {
+    Invalid,
+    Assign,
+    AddEq,
+    SubEq,
+    MulEq,
+    DivEq,
+    ModEq,
 }
 
 ReturnStmt :: distinct Expr
@@ -34,26 +56,16 @@ IfStmt :: struct {
     else_body: BlockStmt
 }
 
-BlockStmt :: distinct []Stmt
-
 WhileStmt :: struct {
     condition: Expr,
     body: BlockStmt
 }
 
+BlockStmt :: distinct []Stmt
+
 CallStmt :: struct {
     id: Token,
     args: []Expr
-}
-
-AssignOp :: enum {
-    Invalid,
-    Assign,
-    AddEq,
-    SubEq,
-    MulEq,
-    DivEq,
-    ModEq,
 }
 
 Expr :: struct {
@@ -69,6 +81,18 @@ ExprVal :: union {
     IdentifierExpr,
     ^BinaryExpr,
     ^UnaryExpr,
+}
+
+IntExpr         :: distinct i64
+FloatExpr       :: distinct f64
+StringExpr      :: distinct string
+BoolExpr        :: distinct bool
+IdentifierExpr  :: distinct string
+
+BinaryExpr :: struct {
+    op: BinaryOp,
+    left:  Expr,
+    right: Expr,
 }
 
 BinaryOp :: enum {
@@ -88,44 +112,26 @@ BinaryOp :: enum {
     Gt_Eq,
 }
 
+UnaryExpr :: struct {
+    op: UnaryOp,
+    expr: Expr
+}
+
 UnaryOp :: enum {
     Invalid,
     Not,
     Sub
 }
 
-IntExpr         :: distinct i64
-FloatExpr       :: distinct f64
-BoolExpr        :: distinct bool
-StringExpr      :: distinct string
-IdentifierExpr  :: distinct string
-
-BinaryExpr :: struct {
-    op: BinaryOp,
-    left:  Expr,
-    right: Expr,
-}
-
-UnaryExpr :: struct {
-    op: UnaryOp,
-    expr: Expr
-}
-
-Parser :: struct {
-    lexer: ^Lexer,
-    current: Token,
-}
-
-
 
 init_parser :: proc(l: ^Lexer, p: ^Parser) {
     p.lexer = l
     p.current = scan_token(p.lexer)
-    skip_newline(p)
+    skip_stmt_separator(p)
 }
 
-skip_newline :: proc(p: ^Parser) {
-    for p.current.kind == .Newline {
+skip_stmt_separator :: proc(p: ^Parser) {
+    for p.current.kind == .Newline || p.current.kind == .Semicolon {
         p.current = scan_token(p.lexer)
     }
 }
@@ -143,23 +149,26 @@ parse_program :: proc(p: ^Parser) -> Program {
             fmt.eprintfln("Failed to parse file %w", p.lexer.path)
             os.exit(1)
         }
-        // println_statement(stmt^)
+        // println_statement(stmt)
         append(&stmts, stmt)
-        skip_newline(p)
-        if p.current.kind == .CloseBrace do return cast(Program)stmts[:]
+        skip_stmt_separator(p)
+        if p.current.kind == .CloseBrace do break
+            
     }
 
     return cast(Program)stmts[:]
 }
 
-parse_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_location) {
+parse_error :: proc(pos: Pos, msg: string, args: ..any, hint := "", loc := #caller_location) {
 	fmt.eprintf("%v Parse error: %s(%d:%d) ", loc, pos.file, pos.line, pos.column)
 	fmt.eprintf(msg, ..args)
 	fmt.eprintf("\n")
+    if hint != "" {
+        fmt.eprintfln("Hint: %v", hint)
+    }
 }
 
 parse_statement :: proc(p: ^Parser, loc := #caller_location) -> Stmt {
-    defer advance(p) //Consume newline or semicolon
     #partial switch p.current.kind {
         case .Id:
             return parse_identifier_stmt(p)
@@ -169,6 +178,8 @@ parse_statement :: proc(p: ^Parser, loc := #caller_location) -> Stmt {
             return parse_if_stmt(p)
         case .While:
             return parse_while_stmt(p)
+        case .OpenBrace:
+            return parse_block_stmt(p)
         case:
             parse_error(p.current.pos, "Unexpected token: %w", p.current.text, loc = loc)
             return nil
@@ -194,15 +205,12 @@ parse_if_stmt :: proc(p: ^Parser) -> Stmt {
     pos := p.current.pos
     advance(p)
     condition := parse_expression(p)
-    skip_newline(p)
-    advance(p) // Consume {
-    skip_newline(p)
+    skip_stmt_separator(p)
+
     body := parse_block_stmt(p)
     else_body: BlockStmt
     if p.current.kind == .Else {
         advance(p) // Consume ELSE
-        advance(p) // Consume {
-        skip_newline(p)
         else_body = parse_block_stmt(p)
     }
     stmt := IfStmt {
@@ -217,14 +225,13 @@ parse_if_stmt :: proc(p: ^Parser) -> Stmt {
 parse_while_stmt :: proc(p: ^Parser) -> Stmt {
     advance(p) // Consume keyword
     condition := parse_expression(p)
-    skip_newline(p)
+    skip_stmt_separator(p)
     if p.current.kind != .OpenBrace {
         parse_error(p.current.pos, "Unexpected token: %v", p.current.text)
         fmt.eprintln("Did you mean: While <condition> {")
     }
-    advance(p) // Consume {
-    skip_newline(p)
     body := parse_block_stmt(p)
+
     stmt := WhileStmt {
         condition = condition,
         body      = BlockStmt(body)
@@ -233,10 +240,15 @@ parse_while_stmt :: proc(p: ^Parser) -> Stmt {
 }
 
 parse_block_stmt :: proc(p: ^Parser) -> BlockStmt {
+    assert(p.current.kind == .OpenBrace)
+    advance(p) // Consume {
+    skip_stmt_separator(p)
     if p.current.kind == .CloseBrace do return nil
-    stmts := parse_program(p)
-    advance(p) // consume }
 
+    stmts := parse_program(p)
+    advance(p)
+
+    assert(p.current.kind != .CloseBrace)
     return BlockStmt(stmts)
 }
 
@@ -247,10 +259,50 @@ parse_identifier_stmt :: proc(p: ^Parser) -> Stmt {
     #partial switch p.current.kind {
     case .OpenParen:
         stmt = parse_call(p, id)
+    case .Colon:
+        stmt = parse_declaration(p, id)
     case .Eq, .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
         stmt = parse_assignment(p, id)
     case:
         parse_error(p.current.pos, "Invalid token: %v", p.current.text)
+    }
+    return stmt
+}
+
+parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
+    stmt: DeclrStmt
+    stmt.id = id
+    advance(p)
+    #partial switch p.current.kind { // What happens after 1st colon
+        case .Eq:
+            advance(p)
+            stmt.value = parse_expression(p)
+            return stmt
+        case .Colon:
+            advance(p)
+            stmt.const = true
+            stmt.value = parse_expression(p)
+        case .Id:
+            stmt.typename = p.current.text
+            advance(p)
+            #partial switch p.current.kind {
+                case .Eq:
+                    advance(p)
+                    stmt.value = parse_expression(p)
+                case .Colon:
+                    advance(p)
+                    stmt.const = true
+                    stmt.value = parse_expression(p)
+                case .Newline:
+                    break
+                case:
+                    parse_error(p.current.pos, "Unexpected token: %w", p.current.text)
+            }
+        case .Newline:
+            parse_error(id.pos, "Incomplete declaration of %w", id.text)
+            return nil
+        case:
+            parse_error(p.current.pos, "Unexpected token: %w", p.current.text)
     }
     return stmt
 }
@@ -280,6 +332,7 @@ parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
             }
         }
     }
+    advance(p)
     stmt := CallStmt {
         id   = id,
         args = args[:]
@@ -509,44 +562,53 @@ parse_factor :: proc(p: ^Parser) -> Expr {
     }
 }
 
-// println_statement :: proc(s: Stmt) {
-//     print_statement(s)
-//     fmt.println()
-// }
+println_statement :: proc(s: Stmt) {
+    print_statement(s)
+    fmt.println()
+}
 
-// print_statement :: proc(s: Stmt) {
-//     print_expression :: proc(e: Expr) {
-//         bin_expr, bin_expr_ok := e.(^BinaryExpr)
-//         if bin_expr_ok {
-//             fmt.printf("(")
-//             print_expression(bin_expr.left)
-//             fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
-//             print_expression(bin_expr.right)
-//             fmt.printf(")")
-//         } else {
-//             fmt.printf("%v", e^)
-//         }
+print_statement :: proc(s: Stmt) {
+    print_expression :: proc(e: ExprVal) {
+        bin_expr, bin_expr_ok := e.(^BinaryExpr)
+        if bin_expr_ok {
+            fmt.printf("(")
+            print_expression(bin_expr.left.inner)
+            fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
+            print_expression(bin_expr.right.inner)
+            fmt.printf(")")
+        } else {
+            fmt.printf("%v", e)
+        }
         
-//     }
-//     #partial switch stmt in s {
-//         case AssignStmt:
-//             fmt.print(stmt.id.text, stmt.op, "")
-//             print_expression(stmt.value)
-//         case IfStmt:
-//             fmt.printf("If: ")
-//             print_expression(stmt.condition)
-//             fmt.println()
-//             for sub_stmt in stmt.main_body do println_statement(sub_stmt^)
-//             if stmt.else_body != nil {
-//                 fmt.printf("Else:\n")
-//                 for sub_stmt in stmt.else_body do println_statement(sub_stmt^)
-//             }
-//             fmt.println("END")
-//         case ReturnStmt:
-//             fmt.print("RETURN ")
-//             print_expression(cast(^Expr)stmt)
-//     }
-// }
+    }
+    #partial switch stmt in s {
+        case AssignStmt:
+            fmt.print(stmt.id.text, stmt.op, "")
+            print_expression(stmt.value.inner)
+        case IfStmt:
+            fmt.printf("If: ")
+            print_expression(stmt.condition.inner)
+            fmt.println()
+            for sub_stmt in stmt.main_body do println_statement(sub_stmt)
+            if stmt.else_body != nil {
+                fmt.printf("Else:\n")
+                for sub_stmt in stmt.else_body do println_statement(sub_stmt)
+            }
+            fmt.println("END")
+        case ReturnStmt:
+            fmt.print("RETURN ")
+            print_expression(cast(ExprVal)stmt.inner)
+        case DeclrStmt:
+            fmt.printf("Declaration:\t%vid: %w\t, typename: %w,\t value: %v ", 
+                stmt.const              ? "const\t" : "\t", stmt.id.text, 
+                stmt.typename == ""     ? "None"   : stmt.typename, 
+                stmt.value.inner == nil ? "none"   : fmt.aprint(eval(stmt.value), allocator = context.temp_allocator)
+            )
+        case CallStmt:
+            fmt.printf("Called %w with args: ", stmt.id.text)
+            for arg in stmt.args do print_expression(arg.inner)
+    }
+}
 
 op_token_kind :: proc(t: TokenKind) -> BinaryOp {
     #partial switch t {

@@ -132,6 +132,12 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
                 if l.ch == '=' {
                     advance_rune(l)
                     token.kind = .DivEq
+                } else if l.ch == '/' {
+                    advance_rune(l)
+                    for l.ch != '\n' && l.ch != -1 {
+                        advance_rune(l)
+                    }
+                    return scan_token(l)
                 }
             case '%':
                 token.kind = .Mod
@@ -158,6 +164,7 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
 
     return
 }
+
 
 scan_string :: proc(l: ^Lexer) -> string {
     advance_rune(l)
