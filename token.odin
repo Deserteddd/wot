@@ -1,8 +1,6 @@
 #+feature dynamic-literals
 package wot
 
-import "core:fmt"
-
 Token :: struct {
 	kind:   TokenKind,
     text:   string,
@@ -23,6 +21,7 @@ TokenKind :: enum u32 {
     Float,
     Char,
     String,
+    Fn,
 
     OpenParen,
     CloseParen,
@@ -76,6 +75,7 @@ keywords: map[string]TokenKind = {
     "true"    = .True,
     "false"   = .False,
     "else"    = .Else,
-    "while"   = .While
+    "while"   = .While,
+    "fn"      = .Fn
 }
 

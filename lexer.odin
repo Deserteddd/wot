@@ -3,7 +3,6 @@ package wot
 import "core:unicode/utf8"
 import "core:unicode"
 import "core:fmt"
-import "core:mem"
 
 Lexer :: struct {
     source:         string,
@@ -232,7 +231,6 @@ scan_string :: proc(l: ^Lexer) -> string {
 
 scan_identifier :: proc(l: ^Lexer) -> string {
 	offset := l.offset
-
 	for is_letter(l.ch) || is_digit(l.ch) {
 		advance_rune(l)
 	}
@@ -301,7 +299,7 @@ advance_rune :: proc(l: ^Lexer) {
             case r == 0:
                 lex_error(l, l.offset, "Illegal NUL character")
             case r >= utf8.RUNE_SELF:
-                r, w = utf8.decode_last_rune_in_string(l.source[l.read_offset:])
+                r, w = utf8.decode_rune_in_string(l.source[l.read_offset:])
                 if r == utf8.RUNE_ERROR && w == 1 {
                     lex_error(l, l.offset, "Illegal UTF-8 encoding")
                 } else if r == utf8.RUNE_BOM && l.offset > 0 {
@@ -322,7 +320,14 @@ advance_rune :: proc(l: ^Lexer) {
 
 offset_to_pos :: proc(l: ^Lexer, offset: int) -> Pos {
 	line := l.line_count
-	column := offset - l.line_offset + 1
+    column := 1
+    i := l.line_offset
+    for i < offset && i < len(l.source) {
+        _, w := utf8.decode_rune_in_string(l.source[i:])
+        if w <= 0 do break
+        i += w
+        column += 1
+    }
 
 	return Pos {
         file = l.path,

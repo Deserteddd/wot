@@ -1,5 +1,6 @@
-a: float = 15+5
-b: int
-c := 15.5
-d: bool : false
-e :: "Hello, Agora!"
+foo :: fn(a: int, b: string) -> ReturnType {
+
+}
+
+foo(69, "Hello, Agora!")
+

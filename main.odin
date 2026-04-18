@@ -36,9 +36,3 @@ main :: proc() {
     fmt.printfln("Executed in: %v", run_time)
     fmt.println("--------------------------------------")
 }
-
-
-
-
-
-

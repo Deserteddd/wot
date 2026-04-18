@@ -23,10 +23,30 @@ Stmt :: union {
 }
 
 DeclrStmt :: struct {
-    const: bool,
+
     id: Token,
-    typename: string,
+    variant: union {
+        VarDeclrStmt,
+        FnDeclrStmt
+    }
+}
+
+VarDeclrStmt :: struct {
+    const: bool,
+    type: string,
     value: Expr
+}
+
+FnDeclrStmt :: struct {
+    id: Token,
+    params: []ParamInfo,
+    return_type: string,
+    body: BlockStmt
+}
+
+ParamInfo :: struct {
+    id: Token,
+    type: string
 }
 
 AssignStmt :: struct {
@@ -132,7 +152,7 @@ init_parser :: proc(l: ^Lexer, p: ^Parser) {
 
 skip_stmt_separator :: proc(p: ^Parser) {
     for p.current.kind == .Newline || p.current.kind == .Semicolon {
-        p.current = scan_token(p.lexer)
+        advance(p)
     }
 }
 
@@ -159,8 +179,26 @@ parse_program :: proc(p: ^Parser) -> Program {
     return cast(Program)stmts[:]
 }
 
-parse_error :: proc(pos: Pos, msg: string, args: ..any, hint := "", loc := #caller_location) {
-	fmt.eprintf("%v Parse error: %s(%d:%d) ", loc, pos.file, pos.line, pos.column)
+parse_error :: proc{parse_error_std, parse_error_custom}
+
+parse_error_std :: proc(p: ^Parser, msg: string, loc := #caller_location) {
+    pos := p.current.pos
+    if ODIN_DEBUG {
+        fmt.eprintf("%v ", loc)
+    }
+	fmt.eprintf("Parse error at %s(%d:%d): ", pos.file, pos.line, pos.column)
+	fmt.eprint(msg)
+    if p.current.text != "" {
+        fmt.eprintf(" %w", p.current.text)
+    }
+	fmt.eprintf("\n")
+}
+
+parse_error_custom :: proc(pos: Pos, msg: string, args: ..any, hint := "", loc := #caller_location) {
+    if ODIN_DEBUG {
+        fmt.eprintf("%v ", loc)
+    }
+	fmt.eprintf("Parse error at %s(%d:%d): ", pos.file, pos.line, pos.column)
 	fmt.eprintf(msg, ..args)
 	fmt.eprintf("\n")
     if hint != "" {
@@ -181,7 +219,7 @@ parse_statement :: proc(p: ^Parser, loc := #caller_location) -> Stmt {
         case .OpenBrace:
             return parse_block_stmt(p)
         case:
-            parse_error(p.current.pos, "Unexpected token: %w", p.current.text, loc = loc)
+            parse_error(p, "Unexpected token:")
             return nil
     }
 }
@@ -195,7 +233,7 @@ parse_keyword_stmt :: proc(p: ^Parser) -> Stmt {
         case .Return:
             stmt = ReturnStmt(parse_expression(p))
         case:
-            parse_error(p.current.pos, "Not implemented: %v", keyword)
+            parse_error(p, "Not implemented:")
             return nil
     }
     return stmt
@@ -227,7 +265,7 @@ parse_while_stmt :: proc(p: ^Parser) -> Stmt {
     condition := parse_expression(p)
     skip_stmt_separator(p)
     if p.current.kind != .OpenBrace {
-        parse_error(p.current.pos, "Unexpected token: %v", p.current.text)
+        parse_error(p, "Unexpected token:")
         fmt.eprintln("Did you mean: While <condition> {")
     }
     body := parse_block_stmt(p)
@@ -264,7 +302,7 @@ parse_identifier_stmt :: proc(p: ^Parser) -> Stmt {
     case .Eq, .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
         stmt = parse_assignment(p, id)
     case:
-        parse_error(p.current.pos, "Invalid token: %v", p.current.text)
+        parse_error(p, "Invalid token:")
     }
     return stmt
 }
@@ -273,38 +311,161 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
     stmt: DeclrStmt
     stmt.id = id
     advance(p)
-    #partial switch p.current.kind { // What happens after 1st colon
+    #partial switch p.current.kind { // after 1st colon
         case .Eq:
             advance(p)
-            stmt.value = parse_expression(p)
+            if p.current.kind == .Fn {
+                parse_error(id.pos, "Functions must be declared as constant: \033[1m%v :: fn(..\033[0m", id.text)
+                return nil
+            }
+            value := parse_expression(p)
+            if value.inner == nil do return nil
+            stmt.variant = VarDeclrStmt {
+                const = false,
+                value = value
+            }
             return stmt
         case .Colon:
             advance(p)
-            stmt.const = true
-            stmt.value = parse_expression(p)
+            #partial switch p.current.kind {
+                case .Fn:
+                    fn_declr_stmt, ok := parse_fn(p, id)
+                    if !ok do return nil
+                    stmt.variant = fn_declr_stmt
+                case:
+                    value := parse_expression(p)
+                    if value.inner == nil do return nil
+                    stmt.variant = VarDeclrStmt {
+                        const = true,
+                        value = value
+                    }
+            }
         case .Id:
-            stmt.typename = p.current.text
+            type := p.current.text
             advance(p)
             #partial switch p.current.kind {
                 case .Eq:
                     advance(p)
-                    stmt.value = parse_expression(p)
+                    value := parse_expression(p)
+                    if value.inner == nil do return nil
+                    stmt.variant = VarDeclrStmt {
+                        const = false,
+                        type = type,
+                        value = value
+                    }
                 case .Colon:
                     advance(p)
-                    stmt.const = true
-                    stmt.value = parse_expression(p)
+                    value := parse_expression(p)
+                    if value.inner == nil do return nil
+                    stmt.variant = VarDeclrStmt {
+                        const = true,
+                        type = type,
+                        value = value
+                    }
                 case .Newline:
                     break
                 case:
-                    parse_error(p.current.pos, "Unexpected token: %w", p.current.text)
+                    parse_error(p, "Unexpected token:")
             }
         case .Newline:
-            parse_error(id.pos, "Incomplete declaration of %w", id.text)
+            parse_error(p, "Incomplete declaration of")
             return nil
         case:
-            parse_error(p.current.pos, "Unexpected token: %w", p.current.text)
+            parse_error(p, "Unexpected token:")
     }
     return stmt
+}
+
+parse_fn :: proc(p: ^Parser, id: Token) -> (FnDeclrStmt, bool) {
+    stmt: FnDeclrStmt
+    assert(p.current.kind == .Fn)
+
+    advance(p)
+    if p.current.kind != .OpenParen {
+        parse_error(p, "Expected \"(\", got:")
+        return {}, false
+    }
+
+    advance(p)
+    params: []ParamInfo
+    ok: bool
+    if p.current.kind != .CloseParen {
+        params, ok = parse_params(p)
+        if !ok do return {}, false
+
+    }
+    stmt.params = params
+    #partial switch p.current.kind {
+        case .Sub:
+            advance(p)
+            if p.current.kind != .Gt {
+                parse_error(p, "Expected \">\", got:")
+                return {}, false
+            } else {
+                advance(p)
+                if p.current.kind != .Id {
+                    parse_error(p, "Expected a type name, got:")
+                    return {}, false
+                }
+                stmt.return_type = p.current.text
+                advance(p)
+                if p.current.kind != .OpenBrace {
+                    parse_error(p, "Expected {, got:")
+                    return {}, false
+                }
+                stmt.body = parse_block_stmt(p)
+            }
+        case .OpenBrace:
+            stmt.body = parse_block_stmt(p)
+        case:
+            parse_error(p, "Invalid token:")
+            return {}, false
+    }
+
+    return stmt, true
+}
+
+parse_params :: proc(p: ^Parser) -> ([]ParamInfo, bool) {
+    parse_param :: proc(p: ^Parser) -> (ParamInfo, bool) {
+        info: ParamInfo
+        
+        if p.current.kind != .Id {
+            parse_error(p, "Expected an identifier, got:")
+            return {}, false
+        }
+        info.id = p.current
+
+        advance(p)
+        if p.current.kind != .Colon {
+            parse_error(p, "Expected a colon, got:")
+            return {}, false
+        }
+
+        advance(p)
+        if p.current.kind != .Id {
+            parse_error(p, "Expected a type name, got:")
+            return {}, false
+        }
+        info.type = p.current.text
+        advance(p)
+
+        return info, true
+    }
+
+    params: [dynamic]ParamInfo
+    for {
+        param, ok := parse_param(p)
+        if !ok do return nil, false; else do append(&params, param)
+
+        if p.current.kind == .CloseParen {
+            advance(p)
+            return params[:], true
+        } else if p.current.kind == .Comma {
+            advance(p)
+        }
+        
+    }
+    return params[:], true
 }
 
 parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
@@ -314,20 +475,20 @@ parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
         for {
             expr := parse_expression(p)
             if expr.inner == nil {
-                parse_error(p.current.pos, "Invalid argument in call to '%v'", id.text)
+                parse_error(p, "Invalid argument in call")
                 return nil
             }
             append(&args, expr)
 
             if p.current.kind == .CloseParen do break
             if p.current.kind != .Comma {
-                parse_error(p.current.pos, "Expected ',' or ')' after argument in call to '%v'", id.text)
+                parse_error(p, "Expected ',' or ')' after argument in call to")
                 return nil
             }
 
             advance(p) // consume ','
             if p.current.kind == .CloseParen {
-                parse_error(p.current.pos, "Trailing comma is not allowed in call to '%v'", id.text)
+                parse_error(p, "Trailing comma is not allowed in call to")
                 return nil
             }
         }
@@ -343,12 +504,13 @@ parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
 parse_assignment :: proc(p: ^Parser, id: Token) -> Stmt {
     op_token := p.current
     if !is_assign_token(op_token.kind) {
-        parse_error(p.current.pos, "Invalid assignment token: %v", p.current.text)
+        parse_error(p, "Invalid assignment token:")
     }
+    op := get_assign_op(p, op_token)
     advance(p) // consume assignment operator
     value := parse_expression(p)
     stmt := AssignStmt {
-        op = get_assign_op(op_token),
+        op = op,
         id = id,
         value = value
     }
@@ -357,7 +519,7 @@ parse_assignment :: proc(p: ^Parser, id: Token) -> Stmt {
     return stmt
 }
 
-get_assign_op :: proc(token: Token) -> AssignOp{
+get_assign_op :: proc(p: ^Parser, token: Token) -> AssignOp{
     #partial switch token.kind {
         case .Eq:       return .Assign
         case .AddEq:    return .AddEq
@@ -366,7 +528,7 @@ get_assign_op :: proc(token: Token) -> AssignOp{
         case .DivEq:    return .DivEq
         case .ModEq:    return .ModEq
         case:
-            parse_error(token.pos, "Invalid assignment: %v", token.text)
+            parse_error(p, "Invalid assignment:")
             return .Invalid
     }
 }
@@ -557,17 +719,12 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         return expr
 
     case:
-        parse_error(p.current.pos, "Invalid Token: %w", p.current.text)
+        parse_error(p, "Invalid Token:")
         return {}
     }
 }
 
 println_statement :: proc(s: Stmt) {
-    print_statement(s)
-    fmt.println()
-}
-
-print_statement :: proc(s: Stmt) {
     print_expression :: proc(e: ExprVal) {
         bin_expr, bin_expr_ok := e.(^BinaryExpr)
         if bin_expr_ok {
@@ -597,18 +754,26 @@ print_statement :: proc(s: Stmt) {
             fmt.println("END")
         case ReturnStmt:
             fmt.print("RETURN ")
-            print_expression(cast(ExprVal)stmt.inner)
+            print_expression(stmt.inner)
         case DeclrStmt:
-            fmt.printf("Declaration:\t%vid: %w\t, typename: %w,\t value: %v ", 
-                stmt.const              ? "const\t" : "\t", stmt.id.text, 
-                stmt.typename == ""     ? "None"   : stmt.typename, 
-                stmt.value.inner == nil ? "none"   : fmt.aprint(eval(stmt.value), allocator = context.temp_allocator)
-            )
+            switch d in stmt.variant {
+                case VarDeclrStmt:
+                    fmt.printf("Var:\t%vid: %w\t, typename: %w,\t value: %v ", 
+                        d.const              ? "const\t" : "\t", stmt.id.text, 
+                        d.type == ""         ? "None"    : d.type, 
+                        d.value.inner == nil ? "none"    : fmt.aprint(eval(d.value), allocator = context.temp_allocator)
+                    )
+                case FnDeclrStmt:
+                    fmt.printf("Fn:\t%v", d)
+            }
         case CallStmt:
             fmt.printf("Called %w with args: ", stmt.id.text)
             for arg in stmt.args do print_expression(arg.inner)
     }
+    fmt.println()
 }
+
+
 
 op_token_kind :: proc(t: TokenKind) -> BinaryOp {
     #partial switch t {
