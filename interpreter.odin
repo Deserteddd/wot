@@ -11,8 +11,8 @@ Var :: struct {
     value: Value,
 }
 
-
 Type :: enum {
+    Unknown,
     Float,
     Int,
     String,
@@ -121,16 +121,22 @@ print_values :: proc(args: []Value, newline: bool) {
 
 value_type :: proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
-        case i64:
-            return .Int
-        case f64:
-            return .Float
-        case string:
-            return .String
-        case bool:
-            return .Bool
+        case i64:    return .Int
+        case f64:    return .Float
+        case string: return .String
+        case bool:   return .Bool
     }
-    panic("invalid value type")
+    panic("Undeclared type")
+}
+
+type_from_string :: proc(typename: string) -> Type {
+    switch typename {
+        case "int":     return .Int
+        case "float":   return .Float
+        case "string":  return .String
+        case "bool":    return .Bool
+        case:           return .Unknown 
+    }
 }
 
 binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
@@ -153,105 +159,6 @@ runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_locatio
 	fmt.eprintf("\n")
     os.exit(1)
 }
-
-run :: proc(program: Program) {
-    for stmt in program {
-        #partial switch &s in stmt {
-            case AssignStmt:
-                rhs := eval(s.value)
-                if s.op == .Assign {
-                    vars[s.id.text] = Var{type = value_type(rhs), value = rhs}
-                } else {
-                    old_var, exists := vars[s.id.text]
-                    if !exists {
-                        runtime_error(
-                            s.id.pos, 
-                            "Compound assignment to undefined variable %w", 
-                            s.id.text
-                        )
-                    }
-                    op, op_ok := binary_op_from_assign_op(s.op)
-                    if !op_ok do runtime_error(
-                        s.id.pos,
-                        "Invalid compound assignment operator %w",
-                        s.id.text
-                    )
-                    
-                    value, ok := apply_op(op, old_var.value, rhs)
-                    if !ok do runtime_error(
-                        s.id.pos,
-                        "Invalid compound assignment operands",
-                    )
-
-                    vars[s.id.text] = Var{type = value_type(value), value = value}
-                }
-            case CallStmt:
-
-                defer free_all(context.temp_allocator)
-                switch s.id.text {
-                    case "print":
-                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
-                        for arg, i in s.args {
-                            args_evaled[i] = eval(arg)
-                        }
-                        print_values(args_evaled, false)
-
-                    case "println":
-                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
-                        for arg, i in s.args {
-                            args_evaled[i] = eval(arg)
-                        }
-                        print_values(args_evaled, true)
-
-                    case "printf", "printfln":
-                        if len(s.args) == 0 do runtime_error(
-                            s.id.pos,
-                            "printf expects at least one argument (format string)"
-                        )
-
-                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
-                        for arg, i in s.args {
-                            args_evaled[i] = eval(arg)
-                        }
-
-                        format, format_ok := args_evaled[0].(string)
-                        if !format_ok do runtime_error(
-                            s.id.pos,
-                            "First argument of printf must be a string. Got: %v",
-                            reflect.union_variant_typeid(args_evaled[0])
-                        )
-
-                        printf_values(format, args_evaled[1:])
-                        if s.id.text == "printfln" do fmt.println()
-
-                    case:
-                        runtime_error(s.id.pos, "Undeclared function: %v()", s.id.text)
-                }
-            case IfStmt:
-                cond := eval(s.condition)
-                if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
-                    if bool_val {
-                        run(auto_cast s.main_body)
-                    } else {
-                        run(auto_cast s.else_body)
-                    }
-                } else do runtime_error(s.condition.pos, "If-condition must evaluate to bool")
-            case WhileStmt:
-                cond := eval(s.condition)
-                if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
-                    for bool_val {
-                        run(auto_cast s.body)
-                        bool_val = eval(s.condition).(bool)
-                    }
-                } else do runtime_error(s.condition.pos, "While-condition must evaluate to bool")
-            case BlockStmt:
-                run(auto_cast s)
-        }
-    }
-}
-
-
-
 
 eval :: proc(e: Expr) -> Value {
     result: Value
@@ -398,4 +305,125 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
     }
 
     return
+}
+
+run :: proc(program: Program) {
+    for stmt in program {
+        #partial switch &s in stmt {
+            case DeclrStmt:
+                switch declr_stmt in s.variant {
+                    case VarDeclrStmt:
+                        rhs := eval(declr_stmt.value)
+                        declared_type := type_from_string(declr_stmt.type)
+                        value_type    := value_type(rhs)
+                        type := declared_type
+                        if declared_type == .Unknown {
+                            type = value_type
+                        } else if value_type != declared_type && !(declared_type == .Float && value_type == .Int) {
+                            runtime_error(
+                                declr_stmt.value.pos,
+                                "Cannot assign value of type: %v to %v: %v",
+                                declared_type, s.id.text, value_type
+                            )
+                        }
+                        vars[s.id.text] = Var{type, rhs}
+                    case FnDeclrStmt:
+                        panic("Functions not implemented in the interpreter")
+                }
+            case AssignStmt:
+                rhs := eval(s.value)
+                if s.op == .Assign {
+                    if vars[s.id.text] == {} do runtime_error(
+                        s.id.pos,
+                        "Assignment to undeclared variable: %v",
+                        s.id.text
+                    )
+                    vars[s.id.text] = Var{type = value_type(rhs), value = rhs}
+                } else {
+                    old_var, exists := vars[s.id.text]
+                    if !exists {
+                        runtime_error(
+                            s.id.pos, 
+                            "Compound assignment to undefined variable %w", 
+                            s.id.text
+                        )
+                    }
+                    op, op_ok := binary_op_from_assign_op(s.op)
+                    if !op_ok do runtime_error(
+                        s.id.pos,
+                        "Invalid compound assignment operator %w",
+                        s.id.text
+                    )
+                    
+                    value, ok := apply_op(op, old_var.value, rhs)
+                    if !ok do runtime_error(
+                        s.id.pos,
+                        "Invalid compound assignment operands",
+                    )
+
+                    vars[s.id.text] = Var{type = value_type(value), value = value}
+                }
+            case CallStmt:
+
+                defer free_all(context.temp_allocator)
+                switch s.id.text {
+                    case "print":
+                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
+                        for arg, i in s.args {
+                            args_evaled[i] = eval(arg)
+                        }
+                        print_values(args_evaled, false)
+
+                    case "println":
+                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
+                        for arg, i in s.args {
+                            args_evaled[i] = eval(arg)
+                        }
+                        print_values(args_evaled, true)
+
+                    case "printf", "printfln":
+                        if len(s.args) == 0 do runtime_error(
+                            s.id.pos,
+                            "printf expects at least one argument (format string)"
+                        )
+
+                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
+                        for arg, i in s.args {
+                            args_evaled[i] = eval(arg)
+                        }
+
+                        format, format_ok := args_evaled[0].(string)
+                        if !format_ok do runtime_error(
+                            s.id.pos,
+                            "First argument of printf must be a string. Got: %v",
+                            reflect.union_variant_typeid(args_evaled[0])
+                        )
+
+                        printf_values(format, args_evaled[1:])
+                        if s.id.text == "printfln" do fmt.println()
+
+                    case:
+                        runtime_error(s.id.pos, "Undeclared function: %v()", s.id.text)
+                }
+            case IfStmt:
+                cond := eval(s.condition)
+                if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
+                    if bool_val {
+                        run(auto_cast s.main_body)
+                    } else {
+                        run(auto_cast s.else_body)
+                    }
+                } else do runtime_error(s.condition.pos, "If-condition must evaluate to bool")
+            case WhileStmt:
+                cond := eval(s.condition)
+                if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
+                    for bool_val {
+                        run(auto_cast s.body)
+                        bool_val = eval(s.condition).(bool)
+                    }
+                } else do runtime_error(s.condition.pos, "While-condition must evaluate to bool")
+            case BlockStmt:
+                run(auto_cast s)
+        }
+    }
 }

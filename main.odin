@@ -25,6 +25,7 @@ main :: proc() {
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
+    check(&program)
     compile_time := time.since(start)
     fmt.println("--------------------------------------")
     fmt.printfln("Compiled in: %v", compile_time)

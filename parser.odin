@@ -38,7 +38,6 @@ VarDeclrStmt :: struct {
 }
 
 FnDeclrStmt :: struct {
-    id: Token,
     params: []ParamInfo,
     return_type: string,
     body: BlockStmt
