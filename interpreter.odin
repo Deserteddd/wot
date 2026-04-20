@@ -4,8 +4,13 @@ import "core:fmt"
 import os "core:os/os2"
 import "core:reflect"
 import "core:strings"
+import "core:unicode/utf8"
 
 vars: map[string]Var
+
+funcs: map[string]Func
+
+Func :: distinct FnDeclrStmt
 
 Var :: struct {
     type: Type,
@@ -13,6 +18,7 @@ Var :: struct {
 }
 
 Type :: enum {
+    None,
     Unknown,
     Float,
     Int,
@@ -21,6 +27,7 @@ Type :: enum {
 }
 
 Value :: union {
+    NoneExpr,
     f64,
     i64,
     Builder,
@@ -157,7 +164,10 @@ binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
 }
 
 runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_location) {
-	fmt.eprintf("%v Runtime error: %s(%d:%d) ", loc, pos.file, pos.line, pos.column)
+    if ODIN_DEBUG {
+        fmt.eprintf("%v ", loc)
+    }
+	fmt.eprintf("Runtime error: %s(%d:%d) ", pos.file, pos.line, pos.column)
 	fmt.eprintf(msg, ..args)
 	fmt.eprintf("\n")
     os.exit(1)
@@ -190,6 +200,8 @@ eval :: proc(e: Expr) -> Value {
                 to_string_unary_op(v.op)
             )
             result = val
+        case NoneExpr:
+            return NoneExpr(0)
         case:
             runtime_error(e.pos, "Invalid expression")
     }
@@ -290,6 +302,8 @@ apply_string_op :: proc(op: BinaryOp, a: ^Builder, b: Value) -> (ok: bool) {
                     strings.write_string(a, strings.to_string(b_val))
                 case bool:
                     strings.write_string(a, b_val ? "true" : "false")
+                case NoneExpr:
+                    return
             }
         case: 
             fmt.eprintfln("%v operation not supported for string type", op)
@@ -333,7 +347,7 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
 }
 
 
-run :: proc(program: Program) {
+run :: proc(program: Program) -> Value {
     for stmt in program {
         #partial switch &s in stmt {
             case DeclrStmt:
@@ -354,8 +368,12 @@ run :: proc(program: Program) {
                         }
                         vars[s.id.text] = Var{type, rhs}
                     case FnDeclrStmt:
-                        panic("Functions not implemented in the interpreter")
+                        funcs[s.id.text] = Func(declr_stmt)
                 }
+            case ReturnStmt:
+                val := eval(Expr(s))
+                fmt.println("Returning", val)
+                return val
             case AssignStmt:
                 rhs := eval(s.value)
                 if s.op == .Assign {
@@ -390,7 +408,6 @@ run :: proc(program: Program) {
                     vars[s.id.text] = Var{type = value_type(value), value = value}
                 }
             case CallStmt:
-
                 defer free_all(context.temp_allocator)
                 switch s.id.text {
                     case "print":
@@ -430,7 +447,37 @@ run :: proc(program: Program) {
                         if s.id.text == "printfln" do fmt.println()
 
                     case:
-                        runtime_error(s.id.pos, "Undeclared function: %v()", s.id.text)
+                        func, func_found := funcs[s.id.text]
+                        if !func_found do runtime_error(
+                            s.id.pos,
+                            "Undeclared function: %v",
+                            s.id.text
+                        )
+                        args_pos := s.id.pos
+                        args_pos.column += utf8.rune_count(s.id.text)
+                        if len(func.params) != len(s.args) do runtime_error(
+                            args_pos,
+                            "Expected %v arguments, got %v",
+                            len(func.params), len(s.args)
+                        )
+
+                        for arg, i in s.args {
+                            param := func.params[i]
+                            rhs := eval(arg)
+                            val_type := value_type(rhs)
+                            if val_type != type_from_string(param.type) do runtime_error(
+                                arg.pos,
+                                "Invalid argument of type %v, expected %v",
+                                val_type, param.type
+                            )
+
+                            vars[param.id.text] = Var{type = value_type(rhs), value = rhs}
+                        }
+                        if func_found {
+                            run(auto_cast func.body)
+                        } else {
+                            runtime_error(s.id.pos, "Undeclared function: %v()", s.id.text)
+                        }
                 }
             case IfStmt:
                 cond := eval(s.condition)
@@ -453,4 +500,5 @@ run :: proc(program: Program) {
                 run(auto_cast s)
         }
     }
+    return {}
 }

@@ -12,7 +12,6 @@ Lexer :: struct {
     read_offset:    int,
     line_offset:    int,
     line_count:     int,
-    error_count:    int
 }
 
 
@@ -25,7 +24,6 @@ default_error_handler :: proc(pos: Pos, msg: string, args: ..any) {
 lex_error :: proc(l: ^Lexer, offset: int, msg: string, args: ..any) {
     pos := offset_to_pos(l, offset)
     default_error_handler(pos, msg, ..args)
-    l.error_count += 1
 }
 
 init_lexer :: proc(l: ^Lexer, src: string, path: string){

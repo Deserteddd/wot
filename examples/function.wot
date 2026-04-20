@@ -1,3 +1,6 @@
-a := "Moi "
-a += "Hello"
-println(a)
+add :: fn(n1: int, n2: int) -> int {
+    printfln("%v + %v = %v", n1, n2, n1 + n2)
+}
+
+
+add(2, 5)

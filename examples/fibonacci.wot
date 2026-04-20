@@ -11,5 +11,4 @@ while n > 0 {
     n -= 1
 }
 
-
 printfln("%vth Fibonacci number: %v", target, b)

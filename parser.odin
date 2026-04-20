@@ -95,6 +95,7 @@ Expr :: struct {
 }
 
 ExprVal :: union {
+    NoneExpr,
     IntExpr,
     FloatExpr,
     StringExpr,
@@ -102,8 +103,11 @@ ExprVal :: union {
     IdentifierExpr,
     ^BinaryExpr,
     ^UnaryExpr,
+    CallExpr,
 }
 
+
+NoneExpr        :: distinct byte
 IntExpr         :: distinct i64
 FloatExpr       :: distinct f64
 StringExpr      :: strings.Builder
@@ -142,6 +146,10 @@ UnaryOp :: enum {
     Invalid,
     Not,
     Sub
+}
+
+CallExpr :: struct {
+
 }
 
 
@@ -394,8 +402,9 @@ parse_fn :: proc(p: ^Parser, id: Token) -> (FnDeclrStmt, bool) {
         params, ok = parse_params(p)
         if !ok do return {}, false
 
-    }
+    } else do advance(p)
     stmt.params = params
+
     #partial switch p.current.kind {
         case .Sub:
             advance(p)
@@ -418,6 +427,7 @@ parse_fn :: proc(p: ^Parser, id: Token) -> (FnDeclrStmt, bool) {
             }
         case .OpenBrace:
             stmt.body = parse_block_stmt(p)
+
         case:
             parse_error(p, "Invalid token:")
             return {}, false
@@ -722,6 +732,11 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         advance(p)
         return expr
 
+    case .Newline, .Semicolon:
+        node := NoneExpr(0)
+        pos := p.current.pos
+        advance(p)
+        return Expr{pos, node}
     case:
         parse_error(p, "Invalid Token:")
         return {}
