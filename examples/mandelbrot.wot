@@ -1,5 +1,6 @@
 y := -1
 iterations := 0
+output := ""
 while y <= 1 {
     x := -2
     while x <= 1 {
@@ -17,15 +18,16 @@ while y <= 1 {
         }
 
         if iter == max_iter {
-            print("#")
+			output += "#"
         } else {
-            print(" ")
+			output += " "
         }
 
         x += 0.0315
     }
 
-    println()
+	output += "\n"
     y += 0.05
 }
+print(output)
 println("Total iterations:", iterations)

@@ -1,6 +1,3 @@
-foo :: fn(a: int, b: string) -> ReturnType {
-
-}
-
-foo(69, "Hello, Agora!")
-
+a := "Moi "
+a += "Hello"
+println(a)

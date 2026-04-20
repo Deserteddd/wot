@@ -3,6 +3,8 @@ package wot
 import "core:fmt"
 import "core:strconv"
 import os "core:os/os2"
+import "core:strings"
+
 
 Parser :: struct {
     lexer: ^Lexer,
@@ -104,7 +106,7 @@ ExprVal :: union {
 
 IntExpr         :: distinct i64
 FloatExpr       :: distinct f64
-StringExpr      :: distinct string
+StringExpr      :: strings.Builder
 BoolExpr        :: distinct bool
 IdentifierExpr  :: distinct string
 
@@ -691,7 +693,10 @@ parse_factor :: proc(p: ^Parser) -> Expr {
 
 
     case .String:
-        node := StringExpr(p.current.text)
+        b: strings.Builder
+        strings.builder_init(&b)
+        strings.write_string(&b, p.current.text)
+        node := StringExpr(b)
         advance(p)
         return Expr{pos, node}
     

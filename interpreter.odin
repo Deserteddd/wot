@@ -3,6 +3,7 @@ package wot
 import "core:fmt"
 import os "core:os/os2"
 import "core:reflect"
+import "core:strings"
 
 vars: map[string]Var
 
@@ -22,9 +23,11 @@ Type :: enum {
 Value :: union {
     f64,
     i64,
-    string,
+    Builder,
     bool
 }
+
+Builder :: strings.Builder
 
 format_value_with_verb :: proc(v: Value, verb: byte) -> string {
     #partial switch value in v {
@@ -46,9 +49,9 @@ format_value_with_verb :: proc(v: Value, verb: byte) -> string {
                 case 'g': return fmt.tprintf("%g", value)
                 case 'G': return fmt.tprintf("%G", value)
             }
-        case string:
+        case strings.Builder:
             switch verb {
-                case 'v', 's': return fmt.tprintf("%s", value)
+                case 'v', 's': return fmt.tprintf("%s", strings.to_string(value))
                 case 'q': return fmt.tprintf("%q", value)
             }
         case bool:
@@ -123,10 +126,10 @@ value_type :: proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
         case i64:    return .Int
         case f64:    return .Float
-        case string: return .String
+        case Builder: return .String
         case bool:   return .Bool
     }
-    panic("Undeclared type")
+    panic("Undeclared type", loc)
 }
 
 type_from_string :: proc(typename: string) -> Type {
@@ -168,7 +171,7 @@ eval :: proc(e: Expr) -> Value {
         case FloatExpr:
             result = f64(v)
         case StringExpr:
-            result = string(v)
+            result = Builder(v)
         case BoolExpr:
             result = bool(v)
         case IdentifierExpr:
@@ -274,8 +277,29 @@ apply_bool_op :: proc(op: BinaryOp, a, b: bool) -> (val: Value, ok: bool) {
     return
 }
 
+apply_string_op :: proc(op: BinaryOp, a: ^Builder, b: Value) -> (ok: bool) {
+    ok = true
+    #partial switch op {
+        case .Add:
+            switch b_val in b {
+                case f64:
+                    strings.write_f64(a, b_val, 'v')
+                case i64:
+                    strings.write_i64(a, b_val)
+                case strings.Builder:
+                    strings.write_string(a, strings.to_string(b_val))
+                case bool:
+                    strings.write_string(a, b_val ? "true" : "false")
+            }
+        case: 
+            fmt.eprintfln("%v operation not supported for string type", op)
+            ok = false
+    }
+    return ok
+}
+
 apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
-    #partial switch left in v1 {
+    #partial switch &left in v1 {
         case i64:
             right, right_ok := v2.(i64)
             if right_ok do return apply_int_op(op, left, right)
@@ -299,13 +323,15 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
             if !right_ok do return
             return apply_bool_op(op, left, right)
 
-        case string:
-            // Strings are valid values, but binary arithmetic on strings is not supported.
-            return
+        case Builder:
+            ok = apply_string_op(op, &left, v2)
+            val = v1
+            return 
     }
 
     return
 }
+
 
 run :: proc(program: Program) {
     for stmt in program {
@@ -333,7 +359,8 @@ run :: proc(program: Program) {
             case AssignStmt:
                 rhs := eval(s.value)
                 if s.op == .Assign {
-                    if vars[s.id.text] == {} do runtime_error(
+                    _, exists := vars[s.id.text]
+                    if !exists do runtime_error(
                         s.id.pos,
                         "Assignment to undeclared variable: %v",
                         s.id.text
@@ -360,7 +387,6 @@ run :: proc(program: Program) {
                         s.id.pos,
                         "Invalid compound assignment operands",
                     )
-
                     vars[s.id.text] = Var{type = value_type(value), value = value}
                 }
             case CallStmt:
@@ -392,14 +418,15 @@ run :: proc(program: Program) {
                             args_evaled[i] = eval(arg)
                         }
 
-                        format, format_ok := args_evaled[0].(string)
+                        format, format_ok := args_evaled[0].(Builder)
+                        format_str := strings.to_string(format)
                         if !format_ok do runtime_error(
                             s.id.pos,
                             "First argument of printf must be a string. Got: %v",
                             reflect.union_variant_typeid(args_evaled[0])
                         )
 
-                        printf_values(format, args_evaled[1:])
+                        printf_values(format_str, args_evaled[1:])
                         if s.id.text == "printfln" do fmt.println()
 
                     case:
