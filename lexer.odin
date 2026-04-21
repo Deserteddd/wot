@@ -50,7 +50,11 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
     if is_letter(ch) {
         token.kind = .Id
         token.text = scan_identifier(l)
-        if keyword := keywords[token.text]; keyword != .Invalid do token.kind = keyword
+        if keyword := keywords[token.text]; keyword != .Invalid {
+            token.kind = keyword
+        } else {
+            token.sym = symbol_intern(token.text)
+        }
     } else if is_digit(ch) {
         token.kind, token.text = scan_number(l)
     } else if ch == '"' {
