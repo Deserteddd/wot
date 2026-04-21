@@ -462,7 +462,7 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
 }
 
 
-run :: proc(program: Program) -> Value {
+run :: proc(program: BlockStmt) -> Value {
     for stmt in program {
         #partial switch &s in stmt {
             case DeclrStmt:

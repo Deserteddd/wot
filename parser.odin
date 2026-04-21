@@ -17,7 +17,6 @@ Stmt :: union {
     DeclrStmt,
     AssignStmt,
     ReturnStmt,
-    PrintStmt,
     IfStmt,
     WhileStmt,
     BlockStmt,
@@ -25,7 +24,6 @@ Stmt :: union {
 }
 
 DeclrStmt :: struct {
-
     id: Token,
     variant: union {
         VarDeclrStmt,
@@ -68,7 +66,6 @@ AssignOp :: enum {
 
 ReturnStmt :: distinct Expr
 
-PrintStmt :: distinct Expr
 
 IfStmt :: struct {
     pos: Pos,
@@ -170,7 +167,7 @@ advance :: proc(p: ^Parser) {
     p.current = scan_token(p.lexer)
 }
 
-parse_program :: proc(p: ^Parser) -> Program {
+parse_program :: proc(p: ^Parser) -> BlockStmt {
     stmts: [dynamic]Stmt
 
     for p.current.kind != .EOF {
@@ -186,7 +183,7 @@ parse_program :: proc(p: ^Parser) -> Program {
             
     }
 
-    return cast(Program)stmts[:]
+    return BlockStmt(stmts[:])
 }
 
 parse_error :: proc{parse_error_std, parse_error_custom}
