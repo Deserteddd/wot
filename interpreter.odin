@@ -6,11 +6,11 @@ import "core:reflect"
 import "core:strings"
 import "core:unicode/utf8"
 
-vars: map[string]Var
-
 funcs: map[string]Func
 
 Func :: distinct FnDeclrStmt
+
+Builder :: strings.Builder
 
 Var :: struct {
     type: Type,
@@ -20,7 +20,6 @@ Var :: struct {
 
 Type :: enum {
     None,
-    Unknown,
     Float,
     Int,
     String,
@@ -28,14 +27,62 @@ Type :: enum {
 }
 
 Value :: union {
-    NoneExpr,
+    None,
     f64,
     i64,
     Builder,
     bool
 }
 
-Builder :: strings.Builder
+Scope_Kind :: enum {
+    Global,
+    Function,
+    Block,
+}
+
+
+
+Scope :: struct {
+    symbols: map[string]Var,
+    parent: ^Scope,
+    kind: Scope_Kind,
+}
+
+
+scope_fetch :: proc(scope: ^Scope, id: string) -> ^Var {
+    if scope == nil do return nil
+
+    s := scope
+
+    // 1) Walk local scope chain up to the nearest function boundary.
+    for s != nil {
+        var, found := &s.symbols[id]
+        if found do return var
+        if s.kind == .Function do break
+        s = s.parent
+    }
+
+    // 2) Continue upward, but only allow globals.
+    for s != nil {
+        if s.kind == .Global {
+            var, found := &s.symbols[id]
+            if found do return var
+        }
+        s = s.parent
+    }
+
+    return nil
+}
+
+scope_add :: proc(scope: ^Scope, id: string, v: Var) -> (overwrote: bool) {
+    val, found := &scope.symbols[id]
+    overwrote = found
+    if overwrote do val^ = v
+    else do scope.symbols[id] = v
+
+    return
+}
+
 
 format_value_with_verb :: proc(v: Value, verb: byte) -> string {
     #partial switch value in v {
@@ -136,7 +183,7 @@ value_type :: proc(v: Value, loc := #caller_location) -> Type {
         case f64:       return .Float
         case Builder:   return .String
         case bool:      return .Bool
-        case NoneExpr:  return .None
+        case None:      return .None
     }
     panic("Undeclared type", loc)
 }
@@ -147,7 +194,7 @@ type_from_string :: proc(typename: string) -> Type {
         case "float":   return .Float
         case "string":  return .String
         case "bool":    return .Bool
-        case:           return .Unknown 
+        case:           return .None 
     }
 }
 
@@ -175,9 +222,9 @@ runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_locatio
     os.exit(1)
 }
 
-eval :: proc(e: Expr) -> Value {
+eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
     result: Value
-    switch v in e.inner {
+    switch v in e.variant {
         case IntExpr:
             result = i64(v)
         case FloatExpr:
@@ -187,60 +234,68 @@ eval :: proc(e: Expr) -> Value {
         case BoolExpr:
             result = bool(v)
         case IdentifierExpr:
-            variable, exists := vars[string(v)]
-            if !exists do runtime_error(e.pos, "Undeclared identifier %w", string(v))
+            variable := scope_fetch(scope, e.id.text)
+            if variable == nil do runtime_error(
+                e.id.pos, 
+                "Undeclared identifier %w", 
+                e.id.text,
+                loc = loc
+            )
             result = variable.value
         case ^BinaryExpr:
-            val, ok := apply_op(v.op, eval(v.left), eval(v.right))
-            if !ok do runtime_error(e.pos, "Invalid operands for binary operation")
+            val, ok := apply_op(
+                v.op, 
+                eval(v.left, scope, loc = loc), 
+                eval(v.right, scope, loc = loc)
+            )
+            if !ok do runtime_error(e.id.pos, "Invalid operands for binary operation")
             result = val
         case ^UnaryExpr:
-            val, ok := apply_unary_op(v.op, eval(v.expr))
+            val, ok := apply_unary_op(v.op, eval(v.expr, scope))
             if !ok do runtime_error(
-                e.pos, 
+                e.id.pos, 
                 "Invalid operand for unary opertaion %w", 
                 to_string_unary_op(v.op)
             )
             result = val
         case ^CallExpr:
-            #partial switch callee in v.callee.inner {
+            #partial switch callee in v.callee.variant {
                 case IdentifierExpr:
                     id_token := Token {
                         kind = .Id,
                         text = string(callee),
-                        pos = v.callee.pos,
+                        pos = v.callee.id.pos,
                     }
-                    result = execute_call(id_token, v.args)
+                    result = execute_call(id_token, v.args, scope)
                 case:
-                    runtime_error(v.callee.pos, "Can only call identifiers")
+                    runtime_error(v.callee.id.pos, "Can only call identifiers")
             }
-        case NoneExpr:
+        case None:
             return v
         case:
-            runtime_error(e.pos, "Invalid expression")
+            runtime_error(e.id.pos, "Invalid expression")
     }
     return result
 }
 
-execute_call :: proc(id: Token, args: []Expr) -> Value {
-    defer free_all(context.temp_allocator)
+execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
 
     switch id.text {
         case "print":
             args_evaled := make([]Value, len(args), context.temp_allocator)
             for arg, i in args {
-                args_evaled[i] = eval(arg)
+                args_evaled[i] = eval(arg, scope)
             }
             print_values(args_evaled, false)
-            return NoneExpr(0)
+            return {}
 
         case "println":
             args_evaled := make([]Value, len(args), context.temp_allocator)
             for arg, i in args {
-                args_evaled[i] = eval(arg)
+                args_evaled[i] = eval(arg, scope)
             }
             print_values(args_evaled, true)
-            return NoneExpr(0)
+            return {}
 
         case "printf", "printfln":
             if len(args) == 0 do runtime_error(
@@ -250,7 +305,7 @@ execute_call :: proc(id: Token, args: []Expr) -> Value {
 
             args_evaled := make([]Value, len(args), context.temp_allocator)
             for arg, i in args {
-                args_evaled[i] = eval(arg)
+                args_evaled[i] = eval(arg, scope)
             }
 
             format, format_ok := args_evaled[0].(Builder)
@@ -263,7 +318,7 @@ execute_call :: proc(id: Token, args: []Expr) -> Value {
 
             printf_values(format_str, args_evaled[1:])
             if id.text == "printfln" do fmt.println()
-            return NoneExpr(0)
+            return {}
 
         case:
             func, func_found := funcs[id.text]
@@ -272,6 +327,13 @@ execute_call :: proc(id: Token, args: []Expr) -> Value {
                 "Undeclared function: %v",
                 id.text
             )
+
+            fn_scope := Scope {
+                symbols = make_map(map[string]Var),
+                parent = scope,
+                kind = .Function,
+            }
+            defer delete(fn_scope.symbols)
 
 
             if len(func.params) != len(args) {
@@ -286,18 +348,18 @@ execute_call :: proc(id: Token, args: []Expr) -> Value {
 
             for arg, i in args {
                 param := func.params[i]
-                rhs := eval(arg)
+                rhs := eval(arg, scope)
                 val_type := value_type(rhs)
                 if val_type != type_from_string(param.type) do runtime_error(
-                    arg.pos,
+                    arg.id.pos,
                     "Invalid argument of type %v, expected %v",
                     val_type, param.type
                 )
 
-                vars[param.id.text] = Var{type = value_type(rhs), value = rhs}
+                scope_add(&fn_scope, param.id.text, Var { value_type(rhs), rhs, true})
             }
 
-            return_val := run(auto_cast func.body)
+            return_val := run_block(func.body, &fn_scope, .Block)
             expected_type := type_from_string(func.return_type)
             actual_type := value_type(return_val)
 
@@ -417,7 +479,7 @@ apply_string_op :: proc(op: BinaryOp, a: ^Builder, b: Value) -> (ok: bool) {
                     strings.write_string(a, strings.to_string(b_val))
                 case bool:
                     strings.write_string(a, b_val ? "true" : "false")
-                case NoneExpr:
+                case None:
                     return
             }
         case: 
@@ -461,36 +523,42 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
     return
 }
 
+run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Value {
+    frame := Scope {
+        symbols = make_map(map[string]Var),
+        parent = scope,
+        kind = block_type,
+    }
+    defer delete(frame.symbols)
 
-run :: proc(program: BlockStmt) -> Value {
-    for stmt in program {
+    for stmt in block {
         #partial switch &s in stmt {
             case DeclrStmt:
                 switch declr_stmt in s.variant {
                     case VarDeclrStmt:
-                        rhs := eval(declr_stmt.value)
+                        rhs := eval(declr_stmt.value, &frame)
                         declared_type := type_from_string(declr_stmt.type)
                         value_type    := value_type(rhs)
                         type := declared_type
-                        if declared_type == .Unknown {
+                        if declared_type == .None {
                             type = value_type
                         } else if !is_legal_cast(value_type, declared_type) {
                             runtime_error(
-                                declr_stmt.value.pos,
+                                declr_stmt.value.id.pos,
                                 "Cannot assign value of type \"%v\" to %v: %v",
                                 declared_type, s.id.text, value_type
                             )
                         }
-                        vars[s.id.text] = Var{type, rhs, declr_stmt.const}
+                        var := Var{type, rhs, declr_stmt.const}
+                        scope_add(&frame, s.id.text, var)
                     case FnDeclrStmt:
                         funcs[s.id.text] = Func(declr_stmt)
                 }
             case ReturnStmt:
-                val := eval(Expr(s))
-                return val
+                return eval(Expr(s), &frame)
             case AssignStmt:
-                assignee, exists := vars[s.id.text]
-                if !exists do runtime_error(
+                assignee := scope_fetch(&frame, s.id.text)
+                if assignee == nil do runtime_error(
                     s.id.pos,
                     "Undeclared variable: %v",
                     s.id.text
@@ -500,53 +568,59 @@ run :: proc(program: BlockStmt) -> Value {
                     "Cannot assign to constant %w",
                     s.id.text
                 )
-                rhs := eval(s.value)
+                rhs := eval(s.value, &frame)
                 if s.op == .Assign {
                     if !is_legal_cast(value_type(rhs), assignee.type) do runtime_error(
                         s.id.pos,
                         "Cannot assign value of type %v to %v: %v",
                         value_type(rhs), s.id.text, assignee.type
                     )
-                    vars[s.id.text] = Var{type = value_type(rhs), value = rhs}
                 } else {
-                    op, op_ok := binary_op_from_assign_op(s.op)
-                    if !op_ok do runtime_error(
+                    op, ok := binary_op_from_assign_op(s.op)
+                    if !ok do runtime_error(
                         s.id.pos,
                         "Invalid compound assignment operator %w",
                         s.id.text
                     )
                     
-                    value, ok := apply_op(op, assignee.value, rhs)
+                    rhs, ok = apply_op(op, assignee.value, rhs)
                     if !ok do runtime_error(
                         s.id.pos,
                         "Cannot assign value of type %v to %v: %v",
                         value_type(rhs), s.id.text, assignee.type
                         
                     )
-                    vars[s.id.text] = Var{type = value_type(value), value = value}
                 }
+
+                assignee.type = value_type(rhs)
+                assignee.value = rhs
             case CallStmt:
-                _ = execute_call(s.id, s.args)
+                _ = execute_call(s.id, s.args, &frame)
             case IfStmt:
-                cond := eval(s.condition)
+                cond := eval(s.condition, &frame)
                 if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
                     if bool_val {
-                        run(auto_cast s.main_body)
+                        run_block(s.main_body, &frame, .Block)
                     } else {
-                        run(auto_cast s.else_body)
+                        run_block(s.else_body, &frame, .Block)
                     }
-                } else do runtime_error(s.condition.pos, "If-condition must evaluate to bool")
+                } else do runtime_error(s.condition.id.pos, "If-condition must evaluate to bool")
             case WhileStmt:
-                cond := eval(s.condition)
+                cond := eval(s.condition, &frame)
                 if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
                     for bool_val {
-                        run(auto_cast s.body)
-                        bool_val = eval(s.condition).(bool)
+                        run_block(s.body, &frame, .Block)
+                        bool_val = eval(s.condition, &frame).(bool)
                     }
-                } else do runtime_error(s.condition.pos, "While-condition must evaluate to bool")
+                } else do runtime_error(s.condition.id.pos, "While-condition must evaluate to bool")
             case BlockStmt:
-                run(auto_cast s)
+                run_block(s, &frame, .Block)
         }
     }
+    return {}
+}
+
+run :: proc(program: BlockStmt) -> Value {
+    run_block(program, nil, .Global)
     return {}
 }

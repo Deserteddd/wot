@@ -1,5 +1,7 @@
 add :: fn(n1: int, n2: int) -> int {
-	return n1 + n2
+	b :: 5
+	b += 1
+	return n1 + n2 + b
 }
 
 a := add(5, 5)

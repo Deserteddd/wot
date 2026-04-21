@@ -86,25 +86,25 @@ CallStmt :: struct {
     args: []Expr
 }
 
+
 Expr :: struct {
-    pos: Pos,
-    inner: ExprVal
+    id: Token,
+
+    variant: union {
+        None,
+        IntExpr,
+        FloatExpr,
+        StringExpr,
+        BoolExpr,
+        IdentifierExpr,
+        ^CallExpr,
+        ^BinaryExpr,
+        ^UnaryExpr,
+    }
 }
 
-ExprVal :: union {
-    NoneExpr,
-    IntExpr,
-    FloatExpr,
-    StringExpr,
-    BoolExpr,
-    IdentifierExpr,
-    ^CallExpr,
-    ^BinaryExpr,
-    ^UnaryExpr,
-}
 
-
-NoneExpr        :: distinct byte
+None            :: struct {}
 IntExpr         :: distinct i64
 FloatExpr       :: distinct f64
 StringExpr      :: strings.Builder
@@ -239,8 +239,8 @@ parse_keyword_stmt :: proc(p: ^Parser) -> Stmt {
     #partial switch keyword.kind {
         case .Return:
             if p.current.kind == .Newline do stmt = ReturnStmt {
-                pos = keyword.pos,
-                inner = NoneExpr(0),
+                keyword,
+                None {},
             }; else do stmt = ReturnStmt(parse_expression(p))
         case:
             parse_error(p, "Not implemented:")
@@ -329,7 +329,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                 return nil
             }
             value := parse_expression(p)
-            if value.inner == nil do return nil
+            if value.variant == nil do return nil
             stmt.variant = VarDeclrStmt {
                 const = false,
                 value = value
@@ -344,7 +344,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     stmt.variant = fn_declr_stmt
                 case:
                     value := parse_expression(p)
-                    if value.inner == nil do return nil
+                    if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = true,
                         value = value
@@ -357,7 +357,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                 case .Eq:
                     advance(p)
                     value := parse_expression(p)
-                    if value.inner == nil do return nil
+                    if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = false,
                         type = type.text,
@@ -366,32 +366,29 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                 case .Colon:
                     advance(p)
                     value := parse_expression(p)
-                    if value.inner == nil do return nil
+                    if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = true,
                         type = type.text,
                         value = value
                     }
                 case .Newline:
-                    value: ExprVal
+                    expr: Expr
                     #partial switch type_from_string(type.text) {
-                        case .Bool:  value = BoolExpr(false)
-                        case .Int:   value = IntExpr(0)
-                        case .Float: value = FloatExpr(0)
+                        case .Bool:  expr.variant = BoolExpr(false)
+                        case .Int:   expr.variant = IntExpr(0)
+                        case .Float: expr.variant = FloatExpr(0)
                         case .String:
                             b: strings.Builder
                             strings.builder_init(&b)
-                            value = StringExpr(b)
+                            expr.variant = StringExpr(b)
                         case:
                             parse_error_custom(type.pos, "Undeclared type: %v", type.text)
                     }
                     stmt.variant = VarDeclrStmt {
                         const = false,
                         type = type.text,
-                        value = Expr {
-                            pos = stmt.id.pos,
-                            inner = ExprVal(value)
-                        }
+                        value = expr
                     }
                 case:
                     parse_error(p, "Unexpected token:")
@@ -518,7 +515,7 @@ parse_call_args :: proc(p: ^Parser, callee_name: string) -> ([]Expr, bool) {
     if p.current.kind != .CloseParen {
         for {
             expr := parse_expression(p)
-            if expr.inner == nil {
+            if expr.variant == nil {
                 parse_error(p, "Invalid argument in call to")
                 fmt.eprintfln("%v()", callee_name)
                 return nil, false
@@ -592,7 +589,7 @@ parse_expression :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.pos, node}
+        left = Expr{left.id, node}
     }
 
     return left
@@ -612,7 +609,7 @@ parse_and :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.pos, node}
+        left = Expr{left.id, node}
     }
 
     return left
@@ -632,7 +629,7 @@ parse_eq :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.pos, node}
+        left = Expr{left.id, node}
     }
 
     return left
@@ -653,7 +650,7 @@ parse_cmp :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.pos, node}
+        left = Expr{left.id, node}
     }
 
     return left
@@ -673,7 +670,7 @@ parse_additive :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.pos, node}
+        left = Expr{left.id, node}
     }
 
     return left
@@ -693,7 +690,7 @@ parse_multiplicative :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.pos, node}
+        left = Expr{left.id, node}
     }
 
     return left
@@ -713,7 +710,7 @@ parse_unary :: proc(p: ^Parser) -> Expr {
             op = unary_op_token_kind(op_token.kind),
             expr = operand,
         }
-        return Expr {op_token.pos, node}
+        return Expr {op_token, node}
     }
 
     return parse_call_expr(p)
@@ -732,26 +729,26 @@ parse_call_expr :: proc(p: ^Parser) -> Expr {
             args = args,
         }
 
-        expr = Expr{expr.pos, node}
+        expr = Expr{expr.id, node}
     }
 
     return expr
 }
 
 parse_factor :: proc(p: ^Parser) -> Expr {
-    pos := p.current.pos
+    token := p.current
     #partial switch p.current.kind {
     case .Int:
         val, ok := strconv.parse_int(p.current.text); assert(ok)
         node := IntExpr(val)
         advance(p)
-        return Expr{pos, node}
+        return Expr{token, node}
 
     case .Float:
         val, ok := strconv.parse_f64(p.current.text); assert(ok)
         node := FloatExpr(val)
         advance(p)
-        return Expr{pos, node}
+        return Expr{token, node}
 
 
     case .String:
@@ -760,17 +757,17 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         strings.write_string(&b, p.current.text)
         node := StringExpr(b)
         advance(p)
-        return Expr{pos, node}
+        return Expr{token, node}
     
     case .True, .False:
         node := BoolExpr(p.current.kind == .True ? true : false)
         advance(p)
-        return Expr{pos, node}
+        return Expr{token, node}
 
     case .Id:
         node := IdentifierExpr(p.current.text)
         advance(p)
-        return Expr{pos, node}
+        return Expr{token, node}
 
     case .OpenParen:
         advance(p) // consume '('
@@ -791,20 +788,20 @@ parse_factor :: proc(p: ^Parser) -> Expr {
 }
 
 println_statement :: proc(s: Stmt) {
-    print_expression :: proc(e: ExprVal) {
-        bin_expr, bin_expr_ok := e.(^BinaryExpr)
+    print_expression :: proc(e: Expr) {
+        bin_expr, bin_expr_ok := e.variant.(^BinaryExpr)
         if bin_expr_ok {
             fmt.printf("(")
-            print_expression(bin_expr.left.inner)
+            print_expression(bin_expr.left)
             fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
-            print_expression(bin_expr.right.inner)
+            print_expression(bin_expr.right)
             fmt.printf(")")
-        } else if call_expr, call_expr_ok := e.(^CallExpr); call_expr_ok {
-            print_expression(call_expr.callee.inner)
+        } else if call_expr, call_expr_ok := e.variant.(^CallExpr); call_expr_ok {
+            print_expression(call_expr.callee)
             fmt.printf("(")
             for arg, i in call_expr.args {
                 if i > 0 do fmt.printf(", ")
-                print_expression(arg.inner)
+                print_expression(arg)
             }
             fmt.printf(")")
         } else {
@@ -815,10 +812,10 @@ println_statement :: proc(s: Stmt) {
     #partial switch stmt in s {
         case AssignStmt:
             fmt.print(stmt.id.text, stmt.op, "")
-            print_expression(stmt.value.inner)
+            print_expression(stmt.value)
         case IfStmt:
             fmt.printf("If: ")
-            print_expression(stmt.condition.inner)
+            print_expression(stmt.condition)
             fmt.println()
             for sub_stmt in stmt.main_body do println_statement(sub_stmt)
             if stmt.else_body != nil {
@@ -828,21 +825,21 @@ println_statement :: proc(s: Stmt) {
             fmt.println("END")
         case ReturnStmt:
             fmt.print("RETURN ")
-            print_expression(stmt.inner)
+            print_expression(auto_cast stmt)
         case DeclrStmt:
             switch d in stmt.variant {
                 case VarDeclrStmt:
                     fmt.printf("Var:\t%vid: %w\t, typename: %w,\t value: %v ", 
-                        d.const              ? "const\t" : "\t", stmt.id.text, 
-                        d.type == ""         ? "None"    : d.type, 
-                        d.value.inner == nil ? "none"    : fmt.aprint(eval(d.value), allocator = context.temp_allocator)
+                        d.const                ? "const\t" : "\t", stmt.id.text, 
+                        d.type == ""           ? "None"    : d.type, 
+                        d.value.variant
                     )
                 case FnDeclrStmt:
                     fmt.printf("Fn:\t%v", d)
             }
         case CallStmt:
             fmt.printf("Called %w with args: ", stmt.id.text)
-            for arg in stmt.args do print_expression(arg.inner)
+            for arg in stmt.args do print_expression(arg)
     }
     fmt.println()
 }

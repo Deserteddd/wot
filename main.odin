@@ -4,6 +4,7 @@ import os "core:os/os2"
 import "core:fmt"
 import "core:time"
 import vmem "core:mem/virtual"
+import "base:runtime"
 
 main :: proc() {
     start := time.now()
@@ -11,6 +12,7 @@ main :: proc() {
     err := vmem.arena_init_growing(&arena)
     assert(err == .None)
     arena_allocator := vmem.arena_allocator(&arena)
+    defer vmem.arena_destroy(&arena)
     context.allocator = arena_allocator
 
 
@@ -25,15 +27,15 @@ main :: proc() {
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
-    check(program)
     compile_time := time.since(start)
     fmt.println("--------------------------------------")
     fmt.printfln("Compiled in: %v", compile_time)
     fmt.println("--------------------------------------")
-    // start = time.now()
-    // run(program)
+    start = time.now()
+    context.allocator = runtime.default_allocator()
+    run(program)
     run_time := time.since(start)
-    // fmt.println("--------------------------------------")
-    // fmt.printfln("Executed in: %v", run_time)
-    // fmt.println("--------------------------------------")
+    fmt.println("--------------------------------------")
+    fmt.printfln("Executed in: %v", run_time)
+    fmt.println("--------------------------------------")
 }
