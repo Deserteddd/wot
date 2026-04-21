@@ -2,6 +2,18 @@ package wot
 
 import "core:fmt"
 
-check :: proc(program: ^Program) {
+float :: f64
 
+TypeInfo :: struct {
+
+}
+
+BaseType :: union {
+    int,
+    float,
+    bool,
+    string
+}
+
+check :: proc(program: ^Program) {
 }

@@ -101,9 +101,9 @@ ExprVal :: union {
     StringExpr,
     BoolExpr,
     IdentifierExpr,
+    ^CallExpr,
     ^BinaryExpr,
     ^UnaryExpr,
-    CallExpr,
 }
 
 
@@ -113,6 +113,11 @@ FloatExpr       :: distinct f64
 StringExpr      :: strings.Builder
 BoolExpr        :: distinct bool
 IdentifierExpr  :: distinct string
+
+CallExpr :: struct {
+    callee: Expr,
+    args: []Expr,
+}
 
 BinaryExpr :: struct {
     op: BinaryOp,
@@ -146,10 +151,6 @@ UnaryOp :: enum {
     Invalid,
     Not,
     Sub
-}
-
-CallExpr :: struct {
-
 }
 
 
@@ -240,7 +241,10 @@ parse_keyword_stmt :: proc(p: ^Parser) -> Stmt {
     advance(p) // Consume keyword
     #partial switch keyword.kind {
         case .Return:
-            stmt = ReturnStmt(parse_expression(p))
+            if p.current.kind == .Newline do stmt = ReturnStmt {
+                pos = keyword.pos,
+                inner = NoneExpr(0),
+            }; else do stmt = ReturnStmt(parse_expression(p))
         case:
             parse_error(p, "Not implemented:")
             return nil
@@ -350,7 +354,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     }
             }
         case .Id:
-            type := p.current.text
+            type := p.current
             advance(p)
             #partial switch p.current.kind {
                 case .Eq:
@@ -359,7 +363,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     if value.inner == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = false,
-                        type = type,
+                        type = type.text,
                         value = value
                     }
                 case .Colon:
@@ -368,16 +372,35 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     if value.inner == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = true,
-                        type = type,
+                        type = type.text,
                         value = value
                     }
                 case .Newline:
-                    break
+                    value: ExprVal
+                    #partial switch type_from_string(type.text) {
+                        case .Bool:  value = BoolExpr(false)
+                        case .Int:   value = IntExpr(0)
+                        case .Float: value = FloatExpr(0)
+                        case .String:
+                            b: strings.Builder
+                            strings.builder_init(&b)
+                            value = StringExpr(b)
+                        case:
+                            parse_error_custom(type.pos, "Undeclared type: %v", type.text)
+                    }
+                    stmt.variant = VarDeclrStmt {
+                        const = false,
+                        type = type.text,
+                        value = Expr {
+                            pos = stmt.id.pos,
+                            inner = ExprVal(value)
+                        }
+                    }
                 case:
                     parse_error(p, "Unexpected token:")
             }
         case .Newline:
-            parse_error(p, "Incomplete declaration of")
+            parse_error_custom(stmt.id.pos, "Incomplete declaration of %w", stmt.id.text)
             return nil
         case:
             parse_error(p, "Unexpected token:")
@@ -480,36 +503,49 @@ parse_params :: proc(p: ^Parser) -> ([]ParamInfo, bool) {
 }
 
 parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
+    args, ok := parse_call_args(p, id.text)
+    if !ok do return nil
+    stmt := CallStmt {
+        id   = id,
+        args = args
+    }
+    return stmt
+}
+
+parse_call_args :: proc(p: ^Parser, callee_name: string) -> ([]Expr, bool) {
     args: [dynamic]Expr
-    advance(p)
+
+    assert(p.current.kind == .OpenParen)
+    advance(p) // consume '('
+
     if p.current.kind != .CloseParen {
         for {
             expr := parse_expression(p)
             if expr.inner == nil {
-                parse_error(p, "Invalid argument in call")
-                return nil
+                parse_error(p, "Invalid argument in call to")
+                fmt.eprintfln("%v()", callee_name)
+                return nil, false
             }
             append(&args, expr)
 
             if p.current.kind == .CloseParen do break
             if p.current.kind != .Comma {
                 parse_error(p, "Expected ',' or ')' after argument in call to")
-                return nil
+                fmt.eprintfln("%v()", callee_name)
+                return nil, false
             }
 
             advance(p) // consume ','
             if p.current.kind == .CloseParen {
                 parse_error(p, "Trailing comma is not allowed in call to")
-                return nil
+                fmt.eprintfln("%v()", callee_name)
+                return nil, false
             }
         }
     }
-    advance(p)
-    stmt := CallStmt {
-        id   = id,
-        args = args[:]
-    }
-    return stmt
+
+    advance(p) // consume ')'
+    return args[:], true
 }
 
 parse_assignment :: proc(p: ^Parser, id: Token) -> Stmt {
@@ -683,7 +719,26 @@ parse_unary :: proc(p: ^Parser) -> Expr {
         return Expr {op_token.pos, node}
     }
 
-    return parse_factor(p)
+    return parse_call_expr(p)
+}
+
+parse_call_expr :: proc(p: ^Parser) -> Expr {
+    expr := parse_factor(p)
+
+    for p.current.kind == .OpenParen {
+        args, ok := parse_call_args(p, "expression")
+        if !ok do return {}
+
+        node := new(CallExpr)
+        node^ = CallExpr {
+            callee = expr,
+            args = args,
+        }
+
+        expr = Expr{expr.pos, node}
+    }
+
+    return expr
 }
 
 parse_factor :: proc(p: ^Parser) -> Expr {
@@ -732,11 +787,6 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         advance(p)
         return expr
 
-    case .Newline, .Semicolon:
-        node := NoneExpr(0)
-        pos := p.current.pos
-        advance(p)
-        return Expr{pos, node}
     case:
         parse_error(p, "Invalid Token:")
         return {}
@@ -751,6 +801,14 @@ println_statement :: proc(s: Stmt) {
             print_expression(bin_expr.left.inner)
             fmt.printf(" %v ", to_string_binary_op(bin_expr.op))
             print_expression(bin_expr.right.inner)
+            fmt.printf(")")
+        } else if call_expr, call_expr_ok := e.(^CallExpr); call_expr_ok {
+            print_expression(call_expr.callee.inner)
+            fmt.printf("(")
+            for arg, i in call_expr.args {
+                if i > 0 do fmt.printf(", ")
+                print_expression(arg.inner)
+            }
             fmt.printf(")")
         } else {
             fmt.printf("%v", e)

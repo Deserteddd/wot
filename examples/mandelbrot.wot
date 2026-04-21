@@ -4,8 +4,8 @@ output := ""
 while y <= 1 {
     x := -2
     while x <= 1 {
-        zx := 0
-        zy := 0
+        zx := 0.0
+        zy := 0.0
         iter := 0
         max_iter := 100
 

@@ -15,6 +15,7 @@ Func :: distinct FnDeclrStmt
 Var :: struct {
     type: Type,
     value: Value,
+    const: bool
 }
 
 Type :: enum {
@@ -131,10 +132,11 @@ print_values :: proc(args: []Value, newline: bool) {
 
 value_type :: proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
-        case i64:    return .Int
-        case f64:    return .Float
-        case Builder: return .String
-        case bool:   return .Bool
+        case i64:       return .Int
+        case f64:       return .Float
+        case Builder:   return .String
+        case bool:      return .Bool
+        case NoneExpr:  return .None
     }
     panic("Undeclared type", loc)
 }
@@ -175,7 +177,7 @@ runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_locatio
 
 eval :: proc(e: Expr) -> Value {
     result: Value
-    #partial switch v in e.inner {
+    switch v in e.inner {
         case IntExpr:
             result = i64(v)
         case FloatExpr:
@@ -200,12 +202,125 @@ eval :: proc(e: Expr) -> Value {
                 to_string_unary_op(v.op)
             )
             result = val
+        case ^CallExpr:
+            #partial switch callee in v.callee.inner {
+                case IdentifierExpr:
+                    id_token := Token {
+                        kind = .Id,
+                        text = string(callee),
+                        pos = v.callee.pos,
+                    }
+                    result = execute_call(id_token, v.args)
+                case:
+                    runtime_error(v.callee.pos, "Can only call identifiers")
+            }
         case NoneExpr:
-            return NoneExpr(0)
+            return v
         case:
             runtime_error(e.pos, "Invalid expression")
     }
     return result
+}
+
+execute_call :: proc(id: Token, args: []Expr) -> Value {
+    defer free_all(context.temp_allocator)
+
+    switch id.text {
+        case "print":
+            args_evaled := make([]Value, len(args), context.temp_allocator)
+            for arg, i in args {
+                args_evaled[i] = eval(arg)
+            }
+            print_values(args_evaled, false)
+            return NoneExpr(0)
+
+        case "println":
+            args_evaled := make([]Value, len(args), context.temp_allocator)
+            for arg, i in args {
+                args_evaled[i] = eval(arg)
+            }
+            print_values(args_evaled, true)
+            return NoneExpr(0)
+
+        case "printf", "printfln":
+            if len(args) == 0 do runtime_error(
+                id.pos,
+                "printf expects at least one argument (format string)"
+            )
+
+            args_evaled := make([]Value, len(args), context.temp_allocator)
+            for arg, i in args {
+                args_evaled[i] = eval(arg)
+            }
+
+            format, format_ok := args_evaled[0].(Builder)
+            format_str := strings.to_string(format)
+            if !format_ok do runtime_error(
+                id.pos,
+                "First argument of printf must be a string. Got: %v",
+                reflect.union_variant_typeid(args_evaled[0])
+            )
+
+            printf_values(format_str, args_evaled[1:])
+            if id.text == "printfln" do fmt.println()
+            return NoneExpr(0)
+
+        case:
+            func, func_found := funcs[id.text]
+            if !func_found do runtime_error(
+                id.pos,
+                "Undeclared function: %v",
+                id.text
+            )
+
+
+            if len(func.params) != len(args) {
+                args_pos := id.pos
+                args_pos.column += utf8.rune_count(id.text)
+                runtime_error(
+                    args_pos,
+                    "Expected %v arguments, got %v",
+                    len(func.params), len(args)
+                )
+            }
+
+            for arg, i in args {
+                param := func.params[i]
+                rhs := eval(arg)
+                val_type := value_type(rhs)
+                if val_type != type_from_string(param.type) do runtime_error(
+                    arg.pos,
+                    "Invalid argument of type %v, expected %v",
+                    val_type, param.type
+                )
+
+                vars[param.id.text] = Var{type = value_type(rhs), value = rhs}
+            }
+
+            return_val := run(auto_cast func.body)
+            expected_type := type_from_string(func.return_type)
+            actual_type := value_type(return_val)
+
+            if !is_legal_cast(actual_type, expected_type) {
+                runtime_error(
+                    id.pos,
+                    "Invalid return type: %v, expected %v",
+                    value_type(return_val), type_from_string(func.return_type)
+                )
+            }
+            return return_val
+    }
+}
+
+is_legal_cast :: proc(from: Type, to: Type) -> (legal: bool) {
+    if from == to do return true
+    #partial switch from {
+        case .Int:
+            #partial switch to {
+                case .Float, .Bool: legal = true
+            }
+    }
+    return
 }
 
 apply_unary_op :: proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
@@ -359,40 +474,41 @@ run :: proc(program: Program) -> Value {
                         type := declared_type
                         if declared_type == .Unknown {
                             type = value_type
-                        } else if value_type != declared_type && !(declared_type == .Float && value_type == .Int) {
+                        } else if !is_legal_cast(value_type, declared_type) {
                             runtime_error(
                                 declr_stmt.value.pos,
-                                "Cannot assign value of type: %v to %v: %v",
+                                "Cannot assign value of type \"%v\" to %v: %v",
                                 declared_type, s.id.text, value_type
                             )
                         }
-                        vars[s.id.text] = Var{type, rhs}
+                        vars[s.id.text] = Var{type, rhs, declr_stmt.const}
                     case FnDeclrStmt:
                         funcs[s.id.text] = Func(declr_stmt)
                 }
             case ReturnStmt:
                 val := eval(Expr(s))
-                fmt.println("Returning", val)
                 return val
             case AssignStmt:
+                assignee, exists := vars[s.id.text]
+                if !exists do runtime_error(
+                    s.id.pos,
+                    "Undeclared variable: %v",
+                    s.id.text
+                )
+                if assignee.const do runtime_error(
+                    s.id.pos,
+                    "Cannot assign to constant %w",
+                    s.id.text
+                )
                 rhs := eval(s.value)
                 if s.op == .Assign {
-                    _, exists := vars[s.id.text]
-                    if !exists do runtime_error(
+                    if !is_legal_cast(value_type(rhs), assignee.type) do runtime_error(
                         s.id.pos,
-                        "Assignment to undeclared variable: %v",
-                        s.id.text
+                        "Cannot assign value of type %v to %v: %v",
+                        value_type(rhs), s.id.text, assignee.type
                     )
                     vars[s.id.text] = Var{type = value_type(rhs), value = rhs}
                 } else {
-                    old_var, exists := vars[s.id.text]
-                    if !exists {
-                        runtime_error(
-                            s.id.pos, 
-                            "Compound assignment to undefined variable %w", 
-                            s.id.text
-                        )
-                    }
                     op, op_ok := binary_op_from_assign_op(s.op)
                     if !op_ok do runtime_error(
                         s.id.pos,
@@ -400,85 +516,17 @@ run :: proc(program: Program) -> Value {
                         s.id.text
                     )
                     
-                    value, ok := apply_op(op, old_var.value, rhs)
+                    value, ok := apply_op(op, assignee.value, rhs)
                     if !ok do runtime_error(
                         s.id.pos,
-                        "Invalid compound assignment operands",
+                        "Cannot assign value of type %v to %v: %v",
+                        value_type(rhs), s.id.text, assignee.type
+                        
                     )
                     vars[s.id.text] = Var{type = value_type(value), value = value}
                 }
             case CallStmt:
-                defer free_all(context.temp_allocator)
-                switch s.id.text {
-                    case "print":
-                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
-                        for arg, i in s.args {
-                            args_evaled[i] = eval(arg)
-                        }
-                        print_values(args_evaled, false)
-
-                    case "println":
-                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
-                        for arg, i in s.args {
-                            args_evaled[i] = eval(arg)
-                        }
-                        print_values(args_evaled, true)
-
-                    case "printf", "printfln":
-                        if len(s.args) == 0 do runtime_error(
-                            s.id.pos,
-                            "printf expects at least one argument (format string)"
-                        )
-
-                        args_evaled := make([]Value, len(s.args), context.temp_allocator)
-                        for arg, i in s.args {
-                            args_evaled[i] = eval(arg)
-                        }
-
-                        format, format_ok := args_evaled[0].(Builder)
-                        format_str := strings.to_string(format)
-                        if !format_ok do runtime_error(
-                            s.id.pos,
-                            "First argument of printf must be a string. Got: %v",
-                            reflect.union_variant_typeid(args_evaled[0])
-                        )
-
-                        printf_values(format_str, args_evaled[1:])
-                        if s.id.text == "printfln" do fmt.println()
-
-                    case:
-                        func, func_found := funcs[s.id.text]
-                        if !func_found do runtime_error(
-                            s.id.pos,
-                            "Undeclared function: %v",
-                            s.id.text
-                        )
-                        args_pos := s.id.pos
-                        args_pos.column += utf8.rune_count(s.id.text)
-                        if len(func.params) != len(s.args) do runtime_error(
-                            args_pos,
-                            "Expected %v arguments, got %v",
-                            len(func.params), len(s.args)
-                        )
-
-                        for arg, i in s.args {
-                            param := func.params[i]
-                            rhs := eval(arg)
-                            val_type := value_type(rhs)
-                            if val_type != type_from_string(param.type) do runtime_error(
-                                arg.pos,
-                                "Invalid argument of type %v, expected %v",
-                                val_type, param.type
-                            )
-
-                            vars[param.id.text] = Var{type = value_type(rhs), value = rhs}
-                        }
-                        if func_found {
-                            run(auto_cast func.body)
-                        } else {
-                            runtime_error(s.id.pos, "Undeclared function: %v()", s.id.text)
-                        }
-                }
+                _ = execute_call(s.id, s.args)
             case IfStmt:
                 cond := eval(s.condition)
                 if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
