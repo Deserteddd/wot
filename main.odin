@@ -8,6 +8,7 @@ import "base:runtime"
 import "core:slice"
 
 main :: proc() {
+    fmt.println(size_of(Expr))
     start := time.now()
     arena: vmem.Arena
     err := vmem.arena_init_growing(&arena)
@@ -33,9 +34,8 @@ main :: proc() {
     fmt.printfln("Compiled in: %v", compile_time)
     fmt.println("--------------------------------------")
     context.allocator = runtime.default_allocator()
-    fast := slice.contains(os.args, "-fast")
     start = time.now()
-    run(program, fast)
+    run(program)
     run_time := time.since(start)
     fmt.println("--------------------------------------")
     fmt.printfln("Executed in: %v", run_time)
