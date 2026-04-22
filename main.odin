@@ -5,6 +5,7 @@ import "core:fmt"
 import "core:time"
 import vmem "core:mem/virtual"
 import "base:runtime"
+import "core:slice"
 
 main :: proc() {
     start := time.now()
@@ -31,9 +32,10 @@ main :: proc() {
     fmt.println("--------------------------------------")
     fmt.printfln("Compiled in: %v", compile_time)
     fmt.println("--------------------------------------")
-    // context.allocator = runtime.default_allocator()
+    context.allocator = runtime.default_allocator()
+    fast := slice.contains(os.args, "-fast")
     start = time.now()
-    run(program)
+    run(program, fast)
     run_time := time.since(start)
     fmt.println("--------------------------------------")
     fmt.printfln("Executed in: %v", run_time)

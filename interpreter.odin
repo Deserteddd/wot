@@ -12,7 +12,7 @@ funcs: map[SymbolId]Func
 
 Func :: distinct FnDeclrStmt
 
-Builder :: strings.Builder
+Builder :: ^strings.Builder
 
 Var :: struct {
     value: Value,
@@ -118,9 +118,9 @@ format_value_with_verb :: proc(v: Value, verb: byte) -> string {
                 case 'g': return fmt.tprintf("%g", value)
                 case 'G': return fmt.tprintf("%G", value)
             }
-        case strings.Builder:
+        case ^strings.Builder:
             switch verb {
-                case 'v', 's': return fmt.tprintf("%s", strings.to_string(value))
+                case 'v', 's': return fmt.tprintf("%s", strings.to_string(value^))
                 case 'q': return fmt.tprintf("%q", value)
             }
         case bool:
@@ -195,7 +195,7 @@ print_values :: proc(args: []Value, newline: bool) {
 }
 
 
-value_type :: proc(v: Value, loc := #caller_location) -> Type {
+value_type :: #force_inline proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
         case i64:       return .Int
         case f64:       return .Float
@@ -215,7 +215,7 @@ type_from_string :: proc(typename: string) -> Type {
     }
 }
 
-binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
+binary_op_from_assign_op :: #force_inline proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
     ok = true
     #partial switch aop {
         case .AddEq: op = .Add
@@ -326,7 +326,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
             }
 
             format, format_ok := args_evaled[0].(Builder)
-            format_str := strings.to_string(format)
+            format_str := strings.to_string(format^)
             if !format_ok do runtime_error(
                 id.pos,
                 "First argument of printf must be a string. Got: %v",
@@ -389,18 +389,78 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
     }
 }
 
-is_legal_cast :: proc(from: Type, to: Type) -> (legal: bool) {
+execute_call2 :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
+    switch id.text {
+        case "print":
+            args_evaled := make([]Value, len(args), context.temp_allocator)
+            for arg, i in args {
+                args_evaled[i] = eval(arg, scope)
+            }
+            print_values(args_evaled, false)
+            return {}
+
+        case "println":
+            args_evaled := make([]Value, len(args), context.temp_allocator)
+            for arg, i in args {
+                args_evaled[i] = eval(arg, scope)
+            }
+            print_values(args_evaled, true)
+            return {}
+
+        case "printf", "printfln":
+
+            args_evaled := make([]Value, len(args), context.temp_allocator)
+            for arg, i in args {
+                args_evaled[i] = eval(arg, scope)
+            }
+
+            format := args_evaled[0].(Builder)
+            format_str := strings.to_string(format^)
+
+            printf_values(format_str, args_evaled[1:])
+            if id.text == "printfln" do fmt.println()
+            return {}
+
+        case:
+            func := funcs[id.sym]
+
+
+            scope_push(scope, .Function)
+            defer {
+                scope_pop(scope)
+            }
+
+
+            for arg, i in args {
+                param := func.params[i]
+                rhs := eval(arg, scope)
+                val_type := value_type(rhs)
+
+                scope_add(scope, param.id.sym, Var { rhs, value_type(rhs), true})
+            }
+
+            return_val := run_block(func.body, scope, .Block)
+
+            return return_val
+    }
+}
+
+is_legal_cast :: #force_inline proc(from: Type, to: Type) -> (legal: bool) {
     if from == to do return true
     #partial switch from {
         case .Int:
             #partial switch to {
-                case .Float, .Bool: legal = true
+                case .Float: legal = true
+            }
+        case .Float:
+            #partial switch to {
+                case .Int: legal = true
             }
     }
     return
 }
 
-apply_unary_op :: proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
+apply_unary_op :: #force_inline proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
     ok = true
     switch op {
         case .Not:
@@ -426,7 +486,7 @@ apply_unary_op :: proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
     return
 }
 
-apply_int_op :: proc(op: BinaryOp, a, b: i64) -> (val: Value, ok: bool) {
+apply_int_op :: #force_inline proc(op: BinaryOp, a, b: i64) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .Add: val = a + b
@@ -447,7 +507,7 @@ apply_int_op :: proc(op: BinaryOp, a, b: i64) -> (val: Value, ok: bool) {
     return
 }
 
-apply_float_op :: proc(op: BinaryOp, a, b: f64) -> (val: Value, ok: bool) {
+apply_float_op :: #force_inline proc(op: BinaryOp, a, b: f64) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .Add: val = a + b
@@ -467,7 +527,7 @@ apply_float_op :: proc(op: BinaryOp, a, b: f64) -> (val: Value, ok: bool) {
     return
 }
 
-apply_bool_op :: proc(op: BinaryOp, a, b: bool) -> (val: Value, ok: bool) {
+apply_bool_op :: #force_inline proc(op: BinaryOp, a, b: bool) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .And:      val = a && b
@@ -481,7 +541,7 @@ apply_bool_op :: proc(op: BinaryOp, a, b: bool) -> (val: Value, ok: bool) {
     return
 }
 
-apply_string_op :: proc(op: BinaryOp, a: ^Builder, b: Value) -> (ok: bool) {
+apply_string_op :: #force_inline proc(op: BinaryOp, a: Builder, b: Value) -> (ok: bool) {
     ok = true
     #partial switch op {
         case .Add:
@@ -490,8 +550,8 @@ apply_string_op :: proc(op: BinaryOp, a: ^Builder, b: Value) -> (ok: bool) {
                     strings.write_f64(a, b_val, 'v')
                 case i64:
                     strings.write_i64(a, b_val)
-                case strings.Builder:
-                    strings.write_string(a, strings.to_string(b_val))
+                case Builder:
+                    strings.write_string(a, strings.to_string(b_val^))
                 case bool:
                     strings.write_string(a, b_val ? "true" : "false")
                 case None:
@@ -504,7 +564,7 @@ apply_string_op :: proc(op: BinaryOp, a: ^Builder, b: Value) -> (ok: bool) {
     return ok
 }
 
-apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
+apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
     
     #partial switch &left in v1 {
         case i64:
@@ -531,12 +591,64 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
             return apply_bool_op(op, left, right)
 
         case Builder:
-            ok = apply_string_op(op, &left, v2)
+            ok = apply_string_op(op, left, v2)
             val = v1
             return 
     }
 
     return
+}
+
+run_block_fast :: proc(block: BlockStmt, scope: ^Scope, block_type: ScopeKind) -> Value {
+    scope_push(scope, block_type)
+    defer scope_pop(scope)
+
+    for stmt in block {
+        #partial switch &s in stmt {
+            case DeclrStmt:
+                switch declr_stmt in s.variant {
+                    case VarDeclrStmt:
+                        value := eval(declr_stmt.value, scope)
+                        value_type    := value_type(value)
+                        var := Var{value, value_type, declr_stmt.const}
+                        scope_add(scope, s.id.sym, var)
+                    case FnDeclrStmt:
+                        funcs[s.id.sym] = Func(declr_stmt)
+                }
+            case ReturnStmt:
+                return eval(Expr(s), scope)
+            case AssignStmt:
+                assignee := scope_fetch(scope, s.id.sym)
+
+                rhs := eval(s.value, scope)
+
+                if s.op != .Assign{
+                    op, ok := binary_op_from_assign_op(s.op)
+                    rhs, ok = apply_op(op, assignee.value, rhs)
+                }
+
+                assignee.value = rhs
+            case CallStmt:
+                _ = execute_call2(s.id, s.args, scope)
+            case IfStmt:
+                cond := eval(s.condition, scope)
+                if cond.(bool) {
+                    run_block_fast(s.main_body, scope, .Block)
+                } else {
+                    run_block_fast(s.else_body, scope, .Block)
+                }
+            case WhileStmt:
+                cond := eval(s.condition, scope)
+                bool_val := cond.(bool)
+                for bool_val {
+                    run_block_fast(s.body, scope, .Block)
+                    bool_val = eval(s.condition, scope).(bool)
+                }
+            case BlockStmt:
+                run_block_fast(s, scope, .Block)
+        }
+    }
+    return {}
 }
 
 run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: ScopeKind) -> Value {
@@ -632,7 +744,11 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: ScopeKind) -> Val
     return {}
 }
 
-run :: proc(program: BlockStmt) -> Value {
+run :: proc(program: BlockStmt, fast: bool) -> Value {
     scope: Scope
-    return run_block(program, &scope, .Global)
+    if fast {
+        return run_block_fast(program, &scope, .Global)
+    } else {
+        return run_block(program, &scope, .Global)
+    }
 }

@@ -107,7 +107,7 @@ Expr :: struct {
 None            :: struct {}
 IntExpr         :: distinct i64
 FloatExpr       :: distinct f64
-StringExpr      :: strings.Builder
+StringExpr      :: Builder
 BoolExpr        :: distinct bool
 IdentifierExpr  :: distinct string
 
@@ -379,8 +379,8 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                         case .Int:   expr.variant = IntExpr(0)
                         case .Float: expr.variant = FloatExpr(0)
                         case .String:
-                            b: strings.Builder
-                            strings.builder_init(&b)
+                            b := new(strings.Builder)
+                            strings.builder_init(b)
                             expr.variant = StringExpr(b)
                         case:
                             parse_error_custom(type.pos, "Undeclared type: %v", type.text)
@@ -752,9 +752,9 @@ parse_factor :: proc(p: ^Parser) -> Expr {
 
 
     case .String:
-        b: strings.Builder
-        strings.builder_init(&b)
-        strings.write_string(&b, p.current.text)
+        b := new(strings.Builder)
+        strings.builder_init(b)
+        strings.write_string(b, p.current.text)
         node := StringExpr(b)
         advance(p)
         return Expr{token, node}
