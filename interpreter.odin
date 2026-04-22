@@ -253,11 +253,11 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
         case BoolExpr:
             result = bool(v)
         case IdentifierExpr:
-            variable := scope_fetch(scope, e.id.sym)
+            variable := scope_fetch(scope, e.id)
             if variable == nil do runtime_error(
-                e.id.pos, 
+                e.pos, 
                 "Undeclared identifier %w", 
-                e.id.text,
+                e.id,
                 loc = loc
             )
             result = variable.value
@@ -267,12 +267,12 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
                 eval(v.left, scope, loc = loc), 
                 eval(v.right, scope, loc = loc)
             )
-            if !ok do runtime_error(e.id.pos, "Invalid operands for binary operation")
+            if !ok do runtime_error(e.pos, "Invalid operands for binary operation")
             result = val
         case ^UnaryExpr:
             val, ok := apply_unary_op(v.op, eval(v.expr, scope))
             if !ok do runtime_error(
-                e.id.pos, 
+                e.pos, 
                 "Invalid operand for unary opertaion %w", 
                 to_string_unary_op(v.op)
             )
@@ -283,17 +283,17 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
                     id_token := Token {
                         kind = .Id,
                         text = string(callee),
-                        sym = v.callee.id.sym,
-                        pos = v.callee.id.pos,
+                        sym = v.callee.id,
+                        pos = v.callee.pos,
                     }
                     result = execute_call(id_token, v.args, scope)
                 case:
-                    runtime_error(v.callee.id.pos, "Can only call identifiers")
+                    runtime_error(v.callee.pos, "Can only call identifiers")
             }
         case None:
             return v
         case:
-            runtime_error(e.id.pos, "Invalid expression")
+            runtime_error(e.pos, "Invalid expression")
     }
     return result
 }
@@ -366,7 +366,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
                 rhs := eval(arg, scope)
                 val_type := value_type(rhs)
                 if val_type != type_from_string(param.type) do runtime_error(
-                    arg.id.pos,
+                    arg.pos,
                     "Invalid argument of type %v, expected %v",
                     val_type, param.type
                 )
@@ -560,7 +560,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: ScopeKind) -> Val
                             type = value_type
                         } else if !is_legal_cast(value_type, declared_type) {
                             runtime_error(
-                                declr_stmt.value.id.pos,
+                                declr_stmt.value.pos,
                                 "Cannot assign value of type \"%v\" to %v: %v",
                                 declared_type, s.id.text, value_type
                             )
@@ -620,7 +620,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: ScopeKind) -> Val
                     } else {
                         run_block(s.else_body, scope, .Block)
                     }
-                } else do runtime_error(s.condition.id.pos, "If-condition must evaluate to bool")
+                } else do runtime_error(s.condition.pos, "If-condition must evaluate to bool")
             case WhileStmt:
                 cond := eval(s.condition, scope)
                 if bool_val, bool_val_ok := cond.(bool); bool_val_ok {
@@ -628,7 +628,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: ScopeKind) -> Val
                         run_block(s.body, scope, .Block)
                         bool_val = eval(s.condition, scope).(bool)
                     }
-                } else do runtime_error(s.condition.id.pos, "While-condition must evaluate to bool")
+                } else do runtime_error(s.condition.pos, "While-condition must evaluate to bool")
             case BlockStmt:
                 run_block(s, scope, .Block)
         }

@@ -88,7 +88,8 @@ CallStmt :: struct {
 
 
 Expr :: struct {
-    id: Token,
+    id: SymbolId,
+    pos: Pos,
 
     variant: union {
         None,
@@ -239,7 +240,8 @@ parse_keyword_stmt :: proc(p: ^Parser) -> Stmt {
     #partial switch keyword.kind {
         case .Return:
             if p.current.kind == .Newline do stmt = ReturnStmt {
-                keyword,
+                keyword.sym,
+                keyword.pos,
                 None {},
             }; else do stmt = ReturnStmt(parse_expression(p))
         case:
@@ -589,7 +591,7 @@ parse_expression :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.id, node}
+        left = Expr{left.id, left.pos, node}
     }
 
     return left
@@ -609,7 +611,7 @@ parse_and :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.id, node}
+        left = Expr{left.id, left.pos, node}
     }
 
     return left
@@ -629,7 +631,7 @@ parse_eq :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.id, node}
+        left = Expr{left.id, left.pos, node}
     }
 
     return left
@@ -650,7 +652,7 @@ parse_cmp :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.id, node}
+        left = Expr{left.id, left.pos, node}
     }
 
     return left
@@ -670,7 +672,7 @@ parse_additive :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.id, node}
+        left = Expr{left.id, left.pos, node}
     }
 
     return left
@@ -690,7 +692,7 @@ parse_multiplicative :: proc(p: ^Parser) -> Expr {
             right = right
         }
 
-        left = Expr{left.id, node}
+        left = Expr{left.id, left.pos, node}
     }
 
     return left
@@ -710,7 +712,7 @@ parse_unary :: proc(p: ^Parser) -> Expr {
             op = unary_op_token_kind(op_token.kind),
             expr = operand,
         }
-        return Expr {op_token, node}
+        return Expr {op_token.sym, op_token.pos, node}
     }
 
     return parse_call_expr(p)
@@ -729,7 +731,7 @@ parse_call_expr :: proc(p: ^Parser) -> Expr {
             args = args,
         }
 
-        expr = Expr{expr.id, node}
+        expr = Expr{expr.id, expr.pos, node}
     }
 
     return expr
@@ -742,13 +744,13 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         val, ok := strconv.parse_int(p.current.text); assert(ok)
         node := IntExpr(val)
         advance(p)
-        return Expr{token, node}
+        return Expr{token.sym, token.pos, node}
 
     case .Float:
         val, ok := strconv.parse_f64(p.current.text); assert(ok)
         node := FloatExpr(val)
         advance(p)
-        return Expr{token, node}
+        return Expr{token.sym, token.pos, node}
 
 
     case .String:
@@ -757,17 +759,17 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         strings.write_string(b, p.current.text)
         node := StringExpr(b)
         advance(p)
-        return Expr{token, node}
+        return Expr{token.sym, token.pos, node}
     
     case .True, .False:
         node := BoolExpr(p.current.kind == .True ? true : false)
         advance(p)
-        return Expr{token, node}
+        return Expr{token.sym, token.pos, node}
 
     case .Id:
         node := IdentifierExpr(p.current.text)
         advance(p)
-        return Expr{token, node}
+        return Expr{token.sym, token.pos, node}
 
     case .OpenParen:
         advance(p) // consume '('
