@@ -94,21 +94,13 @@ Expr :: struct {
         Int,
         Float,
         String,
-        BoolExpr,
-        IdentifierExpr,
+        Bool,
+        Identifier,
         ^CallExpr,
         ^BinaryExpr,
         ^UnaryExpr,
     }
 }
-
-
-None            :: struct {}
-BoolExpr        :: distinct bool
-IdentifierExpr  :: distinct string
-
-
-
 
 CallExpr :: struct {
     callee: Expr,
@@ -192,7 +184,7 @@ parse_error_std :: proc(p: ^Parser, msg: string, loc := #caller_location) {
     if ODIN_DEBUG {
         fmt.eprintf("%v ", loc)
     }
-	fmt.eprintf("Parse error at %s(%d:%d): ", pos.file, pos.line, pos.column)
+	fmt.printf("Parse error at %s(%d:%d): ", pos.file, pos.line, pos.column)
 	fmt.eprint(msg)
     if p.current.text != "" {
         fmt.eprintf(" %w", p.current.text)
@@ -375,7 +367,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                 case .Newline:
                     expr: Expr
                     #partial switch type_from_string(type.text) {
-                        case .Bool:  expr.variant = BoolExpr(false)
+                        case .Bool:  expr.variant = Bool(false)
                         case .Int:   expr.variant = Int(0)
                         case .Float: expr.variant = Float(0)
                         case .String:
@@ -755,12 +747,12 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         return Expr{token.sym, token.pos, node}
     
     case .True, .False:
-        node := BoolExpr(p.current.kind == .True ? true : false)
+        node := Bool(p.current.kind == .True ? true : false)
         advance(p)
         return Expr{token.sym, token.pos, node}
 
     case .Id:
-        node := IdentifierExpr(p.current.text)
+        node := Identifier(p.current.text)
         advance(p)
         return Expr{token.sym, token.pos, node}
 

@@ -1,4 +1,4 @@
-target := 50
+target := 10
 n := target
 a := 0
 b := 0

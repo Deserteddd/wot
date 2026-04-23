@@ -1,10 +1,13 @@
 package wot
 
+None :: struct {}
 
-Int :: i32
-Uint :: u32
-Float :: f32
-String :: string
+Int     :: distinct i32
+Uint    :: distinct u32
+Float   :: distinct f32
+String  :: distinct string
+Bool    :: distinct bool
+Identifier :: distinct string
 
 Type :: enum {
     None,

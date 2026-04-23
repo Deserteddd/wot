@@ -112,7 +112,7 @@ format_value_with_verb :: proc(v: Value, verb: byte) -> string {
     panic(fmt.tprintf("Unsupported format verb '%%%c' for argument value", verb))
 }
 
-printf_values :: proc(format: string, args: []Value) {
+printf_values :: proc(format: String, args: []Value) {
     arg_i := 0
     segment_start := 0
     i := 0
@@ -216,14 +216,14 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
             result = Float(v)
         case String:
             result = String(v)
-        case BoolExpr:
+        case Bool:
             result = bool(v)
-        case IdentifierExpr:
+        case Identifier:
             variable := scope_fetch(scope, e.id)
             if variable == nil do runtime_error(
                 e.pos, 
                 "Undeclared identifier %w", 
-                e.id,
+                symbol_name(e.id),
                 loc = loc
             )
             result = variable.value
@@ -245,7 +245,7 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
             result = val
         case ^CallExpr:
             #partial switch callee in v.callee.variant {
-                case IdentifierExpr:
+                case Identifier:
                     id_token := Token {
                         kind = .Id,
                         text = string(callee),
@@ -318,7 +318,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
 
             if len(func.params) != len(args) {
                 args_pos := id.pos
-                args_pos.column += Uint(utf8.rune_count(id.text))
+                args_pos.column += u32(utf8.rune_count(id.text))
                 runtime_error(
                     args_pos,
                     "Expected %v arguments, got %v",
@@ -476,7 +476,7 @@ apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: 
             return apply_bool_op(op, left, right)
 
         case String:
-            return
+            return "", false
     }
 
     return
@@ -538,13 +538,14 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: ScopeKind) -> Val
                         s.id.text
                     )
                     
-                    rhs, ok = apply_op(op, assignee.value, rhs)
-                    if !ok do runtime_error(
+                    new_val, op_ok := apply_op(op, assignee.value, rhs)
+                    if !op_ok do runtime_error(
                         s.id.pos,
-                        "Cannot assign value of type %v to %v: %v",
-                        value_type(rhs), s.id.text, assignee.type
+                        "%v-operation not supported between types %v and %v",
+                        op, assignee.type, value_type(rhs)
                         
                     )
+                    rhs = new_val
                 }
 
                 assignee.type = value_type(rhs)
