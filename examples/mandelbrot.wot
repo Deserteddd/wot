@@ -3,8 +3,8 @@ iterations: int
 while y <= 1 {
 	x := -2
 	while x <= 1 {
-		zx := 0
-		zy := 0
+		zx := 0.0
+		zy := 0.0
 		iter := 0
 		max_iter := 100
 
@@ -17,9 +17,9 @@ while y <= 1 {
 		}
 
 		if iter == max_iter {
-			print("#")
+			print('#')
 		} else {
-			print(" ")
+			print(' ')
 		}
 
 		x += 0.0315
@@ -28,4 +28,4 @@ while y <= 1 {
 	println()
 	y += 0.05
 }
-println("Total iterations:", iterations)
+println(iterations)

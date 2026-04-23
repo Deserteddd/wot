@@ -1,6 +1,9 @@
 #+feature dynamic-literals
 package wot
 
+import "core:fmt"
+import os "core:os/os2"
+
 SymbolId :: distinct u16
 
 symbol_ids_by_name: map[string]SymbolId
@@ -23,7 +26,10 @@ symbol_intern :: proc(name: string) -> SymbolId {
 
 symbol_name :: proc(id: SymbolId) -> string {
     i := int(id)
-    if i <= 0 || i > len(symbol_names_by_id) do return ""
+    if i <= 0 || i > len(symbol_names_by_id) {
+        fmt.eprintfln("Symbol id: %v doesn't exist")
+        os.exit(1)
+    }
     return symbol_names_by_id[i - 1]
 }
 
@@ -36,7 +42,7 @@ Token :: struct {
 
 Pos :: struct {
 	file:   string,
-    offset, line, column: u32
+    offset, line, column: int
 }
 
 TokenKind :: enum u32 {

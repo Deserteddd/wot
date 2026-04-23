@@ -93,8 +93,8 @@ Expr :: struct {
         None,
         Int,
         Float,
-        String,
         Bool,
+        Char,
         Identifier,
         ^CallExpr,
         ^BinaryExpr,
@@ -370,8 +370,6 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                         case .Bool:  expr.variant = Bool(false)
                         case .Int:   expr.variant = Int(0)
                         case .Float: expr.variant = Float(0)
-                        case .String:
-                            expr.variant = String(p.current.text)
                         case:
                             parse_error_custom(type.pos, "Undeclared type: %v", type.text)
                     }
@@ -739,12 +737,6 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         node := Float(val)
         advance(p)
         return Expr{token.sym, token.pos, node}
-
-
-    case .String:
-        node := String(p.current.text)
-        advance(p)
-        return Expr{token.sym, token.pos, node}
     
     case .True, .False:
         node := Bool(p.current.kind == .True ? true : false)
@@ -753,6 +745,11 @@ parse_factor :: proc(p: ^Parser) -> Expr {
 
     case .Id:
         node := Identifier(p.current.text)
+        advance(p)
+        return Expr{token.sym, token.pos, node}
+
+    case .Char:
+        node := Char(p.current.text[0])
         advance(p)
         return Expr{token.sym, token.pos, node}
 
@@ -835,7 +832,6 @@ type_from_string :: #force_inline proc(typename: string) -> Type {
     switch typename {
         case "int":     return .Int
         case "float":   return .Float
-        case "string":  return .String
         case "bool":    return .Bool
         case:           return .None 
     }

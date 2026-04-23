@@ -1,14 +1,12 @@
+a := 4 + 5 * 12
 
-a := add(5, 5)
-
-add :: fn(n1: int, n2: int) -> int {
-	return n1 + n2
+foo :: fn(a: int, b: int, c: int) -> int {
+    d := a + b
+    if (d>0) {
+        return 2 * a + b * b - 4 * a * c
+    } else {
+        return 0
+    }
 }
 
-sub :: fn(n1: int, n2: int) -> int {
-	return n1 - n2
-}
-
-b := sub(a, 12)
-
-println(b)
+println(foo(a, 2 * a, 3 * a))
