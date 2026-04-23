@@ -1,8 +1,5 @@
 
 
-a := add(5, 5)
-b := sub(a, 12)
-
 add :: fn(n1: int, n2: int) -> int {
 	return n1 + n2
 }
@@ -10,5 +7,8 @@ add :: fn(n1: int, n2: int) -> int {
 sub :: fn(n1: int, n2: int) -> int {
 	return n1 - n2
 }
+
+a := add(5, 5)
+b := sub(a, 12)
 
 println(b)

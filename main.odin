@@ -8,7 +8,6 @@ import "base:runtime"
 import "core:slice"
 
 main :: proc() {
-    fmt.println(size_of(Expr))
     start := time.now()
     arena: vmem.Arena
     err := vmem.arena_init_growing(&arena)
@@ -29,15 +28,16 @@ main :: proc() {
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
+    create_interp_tree(program)
     compile_time := time.since(start)
-    fmt.println("--------------------------------------")
+    // fmt.println("--------------------------------------")
     fmt.printfln("Compiled in: %v", compile_time)
-    fmt.println("--------------------------------------")
-    context.allocator = runtime.default_allocator()
-    start = time.now()
+    // fmt.println("--------------------------------------")
+    // context.allocator = runtime.default_allocator()
+    // start = time.now()
     run(program)
-    run_time := time.since(start)
-    fmt.println("--------------------------------------")
-    fmt.printfln("Executed in: %v", run_time)
-    fmt.println("--------------------------------------")
+    // run_time := time.since(start)
+    // fmt.println("--------------------------------------")
+    // fmt.printfln("Executed in: %v", run_time)
+    // fmt.println("--------------------------------------")
 }

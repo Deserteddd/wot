@@ -11,8 +11,6 @@ Parser :: struct {
     current: Token,
 }
 
-Program :: distinct BlockStmt
-
 Stmt :: union {
     DeclrStmt,
     AssignStmt,
@@ -93,9 +91,9 @@ Expr :: struct {
 
     variant: union {
         None,
-        IntExpr,
-        FloatExpr,
-        StringExpr,
+        Int,
+        Float,
+        String,
         BoolExpr,
         IdentifierExpr,
         ^CallExpr,
@@ -106,11 +104,11 @@ Expr :: struct {
 
 
 None            :: struct {}
-IntExpr         :: distinct i64
-FloatExpr       :: distinct f64
-StringExpr      :: Builder
 BoolExpr        :: distinct bool
 IdentifierExpr  :: distinct string
+
+
+
 
 CallExpr :: struct {
     callee: Expr,
@@ -378,12 +376,10 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     expr: Expr
                     #partial switch type_from_string(type.text) {
                         case .Bool:  expr.variant = BoolExpr(false)
-                        case .Int:   expr.variant = IntExpr(0)
-                        case .Float: expr.variant = FloatExpr(0)
+                        case .Int:   expr.variant = Int(0)
+                        case .Float: expr.variant = Float(0)
                         case .String:
-                            b := new(strings.Builder)
-                            strings.builder_init(b)
-                            expr.variant = StringExpr(b)
+                            expr.variant = String(p.current.text)
                         case:
                             parse_error_custom(type.pos, "Undeclared type: %v", type.text)
                     }
@@ -742,22 +738,19 @@ parse_factor :: proc(p: ^Parser) -> Expr {
     #partial switch p.current.kind {
     case .Int:
         val, ok := strconv.parse_int(p.current.text); assert(ok)
-        node := IntExpr(val)
+        node := Int(val)
         advance(p)
         return Expr{token.sym, token.pos, node}
 
     case .Float:
         val, ok := strconv.parse_f64(p.current.text); assert(ok)
-        node := FloatExpr(val)
+        node := Float(val)
         advance(p)
         return Expr{token.sym, token.pos, node}
 
 
     case .String:
-        b := new(strings.Builder)
-        strings.builder_init(b)
-        strings.write_string(b, p.current.text)
-        node := StringExpr(b)
+        node := String(p.current.text)
         advance(p)
         return Expr{token.sym, token.pos, node}
     
@@ -846,7 +839,15 @@ println_statement :: proc(s: Stmt) {
     fmt.println()
 }
 
-
+type_from_string :: #force_inline proc(typename: string) -> Type {
+    switch typename {
+        case "int":     return .Int
+        case "float":   return .Float
+        case "string":  return .String
+        case "bool":    return .Bool
+        case:           return .None 
+    }
+}
 
 op_token_kind :: proc(t: TokenKind) -> BinaryOp {
     #partial switch t {

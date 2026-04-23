@@ -12,31 +12,7 @@ funcs: map[SymbolId]Func
 
 Func :: distinct FnDeclrStmt
 
-Int :: i32
-Float :: f32
-Builder :: ^strings.Builder
 
-Var :: struct {
-    value: Value,
-    type: Type,
-    const: bool,
-}
-
-Type :: enum {
-    None,
-    Float,
-    Int,
-    String,
-    Bool,
-}
-
-Value :: union {
-    None,
-    Float,
-    Int,
-    Builder,
-    bool
-}
 
 ScopeKind :: enum {
     Global,
@@ -120,9 +96,9 @@ format_value_with_verb :: proc(v: Value, verb: byte) -> string {
                 case 'g': return fmt.tprintf("%g", value)
                 case 'G': return fmt.tprintf("%G", value)
             }
-        case ^strings.Builder:
+        case String:
             switch verb {
-                case 'v', 's': return fmt.tprintf("%s", strings.to_string(value^))
+                case 'v', 's': return fmt.tprintf("%s", value)
                 case 'q': return fmt.tprintf("%q", value)
             }
         case bool:
@@ -201,20 +177,10 @@ value_type :: #force_inline proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
         case Int:       return .Int
         case Float:     return .Float
-        case Builder:   return .String
+        case String:    return .String
         case bool:      return .Bool
     }
     return .None
-}
-
-type_from_string :: #force_inline proc(typename: string) -> Type {
-    switch typename {
-        case "int":     return .Int
-        case "float":   return .Float
-        case "string":  return .String
-        case "bool":    return .Bool
-        case:           return .None 
-    }
 }
 
 binary_op_from_assign_op :: #force_inline proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
@@ -244,12 +210,12 @@ runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_locatio
 eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
     result: Value
     switch v in e.variant {
-        case IntExpr:
+        case Int:
             result = Int(v)
-        case FloatExpr:
+        case Float:
             result = Float(v)
-        case StringExpr:
-            result = Builder(v)
+        case String:
+            result = String(v)
         case BoolExpr:
             result = bool(v)
         case IdentifierExpr:
@@ -327,15 +293,14 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
                 args_evaled[i] = eval(arg, scope)
             }
 
-            format, format_ok := args_evaled[0].(Builder)
-            format_str := strings.to_string(format^)
+            format, format_ok := args_evaled[0].(String)
             if !format_ok do runtime_error(
                 id.pos,
                 "First argument of printf must be a string. Got: %v",
                 reflect.union_variant_typeid(args_evaled[0])
             )
 
-            printf_values(format_str, args_evaled[1:])
+            printf_values(format, args_evaled[1:])
             if id.text == "printfln" do fmt.println()
             return {}
 
@@ -353,7 +318,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
 
             if len(func.params) != len(args) {
                 args_pos := id.pos
-                args_pos.column += utf8.rune_count(id.text)
+                args_pos.column += Uint(utf8.rune_count(id.text))
                 runtime_error(
                     args_pos,
                     "Expected %v arguments, got %v",
@@ -485,31 +450,7 @@ apply_bool_op :: #force_inline proc(op: BinaryOp, a, b: bool) -> (val: Value, ok
     return
 }
 
-apply_string_op :: #force_inline proc(op: BinaryOp, a: Builder, b: Value) -> (ok: bool) {
-    ok = true
-    #partial switch op {
-        case .Add:
-            switch b_val in b {
-                case Float:
-                    strings.write_f32(a, b_val, 'v')
-                case Int:
-                    strings.write_int(a, int(b_val))
-                case Builder:
-                    strings.write_string(a, strings.to_string(b_val^))
-                case bool:
-                    strings.write_string(a, b_val ? "true" : "false")
-                case None:
-                    return
-            }
-        case: 
-            fmt.eprintfln("%v operation not supported for string type", op)
-            ok = false
-    }
-    return ok
-}
-
 apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
-    
     #partial switch &left in v1 {
         case Int:
             right, right_ok := v2.(Int)
@@ -534,10 +475,8 @@ apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: 
             if !right_ok do return
             return apply_bool_op(op, left, right)
 
-        case Builder:
-            ok = apply_string_op(op, left, v2)
-            val = v1
-            return 
+        case String:
+            return
     }
 
     return

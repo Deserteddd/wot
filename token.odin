@@ -36,7 +36,7 @@ Token :: struct {
 
 Pos :: struct {
 	file:   string,
-    offset, line, column: int
+    offset, line, column: u32
 }
 
 TokenKind :: enum u32 {
