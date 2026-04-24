@@ -1,12 +1,11 @@
-a := 4 + 5 * 12
 
-foo :: fn(a: int, b: int, c: int) -> int {
-    d := a + b
-    if (d>0) {
-        return 2 * a + b * b - 4 * a * c
-    } else {
-        return 0
-    }
+add :: fn(
+    n1: int,
+    n2: int
+) -> int { 
+    a := n1 + n2
+    return a 
 }
 
-println(foo(a, 2 * a, 3 * a))
+
+println(4+4*add(1, 2))

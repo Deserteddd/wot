@@ -6,7 +6,7 @@ import "core:reflect"
 import "core:strings"
 import "core:unicode/utf8"
 
-funcs: map[string]Func
+funcs: map[SymbolId]Func
 
 Func :: distinct FnDeclrStmt
 
@@ -43,6 +43,29 @@ Scope :: struct {
     kind: Scope_Kind,
 }
 
+scope_push :: proc(parent: ^Scope, kind: Scope_Kind) -> Scope {
+    if kind == .Global && parent != nil {
+        panic("Global scope cannot have a parent")
+    }
+    if kind != .Global && parent == nil {
+        panic("Non-global scope requires a parent")
+    }
+
+    return Scope {
+        symbols = make_map(map[SymbolId]Var),
+        parent = parent,
+        kind = kind,
+    }
+}
+
+scope_pop :: proc(scope: ^Scope) {
+    if scope == nil do return
+    if scope.symbols != nil {
+        delete(scope.symbols)
+    }
+    scope.parent = nil
+}
+
 
 scope_fetch :: proc(scope: ^Scope, id: SymbolId) -> ^Var {
     if scope == nil do return nil
@@ -60,7 +83,7 @@ scope_fetch :: proc(scope: ^Scope, id: SymbolId) -> ^Var {
     for s != nil {
         if s.kind == .Global {
             var, found := &s.symbols[id]
-            if found do return var
+            if found && var.const do return var
         }
         s = s.parent
     }
@@ -179,6 +202,7 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
                     id_token := Token {
                         kind = .Id,
                         text = string(callee),
+                        sym  = v.callee.id,
                         pos = v.callee.pos,
                     }
                     result = execute_call(id_token, v.args, scope)
@@ -194,7 +218,6 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
 }
 
 execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
-
     switch id.text {
         case "print":
             args_evaled := make([]Value, len(args), context.temp_allocator)
@@ -213,19 +236,16 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
             return {}
 
         case:
-            func, func_found := funcs[id.text]
+            // fmt.printfln("seaching function %v, from %v", id.text, funcs)
+            func, func_found := funcs[id.sym]
             if !func_found do runtime_error(
                 id.pos,
                 "Undeclared function: %v",
                 id.text
             )
 
-            fn_scope := Scope {
-                symbols = make_map(map[SymbolId]Var),
-                parent = scope,
-                kind = .Function,
-            }
-            defer delete(fn_scope.symbols)
+            fn_scope := scope_push(scope, .Function)
+            defer scope_pop(&fn_scope)
 
 
             if len(func.params) != len(args) {
@@ -388,12 +408,8 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
 }
 
 run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Value {
-    frame := Scope {
-        symbols = make_map(map[SymbolId]Var),
-        parent = scope,
-        kind = block_type,
-    }
-    defer delete(frame.symbols)
+    frame := scope_push(scope, block_type)
+    defer scope_pop(&frame)
 
     return_value: Value
 
@@ -418,7 +434,10 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Va
                         var := Var{type, rhs, declr_stmt.const}
                         scope_add(&frame, s.id.sym, var)
                     case FnDeclrStmt:
-                        funcs[s.id.text] = Func(declr_stmt)
+                        if block_type != .Global do runtime_error(
+                            s.id.pos,
+                            "Nested functions aren't supported (yet)"
+                        )
                 }
             case ReturnStmt:
                 return eval(Expr(s), &frame)
@@ -487,6 +506,13 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Va
 }
 
 run :: proc(program: BlockStmt) -> Value {
+    for stmt in program {
+        if declr, declr_ok := stmt.(DeclrStmt); declr_ok {
+            if fn_declr, fn_declr_ok := declr.variant.(FnDeclrStmt); fn_declr_ok {
+                funcs[declr.id.sym] = Func(fn_declr)
+            }
+        }
+    }
     run_block(program, nil, .Global)
     return {}
 }

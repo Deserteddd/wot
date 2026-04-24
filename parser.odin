@@ -73,6 +73,7 @@ IfStmt :: struct {
 }
 
 WhileStmt :: struct {
+    pos: Pos,
     condition: Expr,
     body: BlockStmt
 }
@@ -150,6 +151,12 @@ init_parser :: proc(l: ^Lexer, p: ^Parser) {
 
 skip_stmt_separator :: proc(p: ^Parser) {
     for p.current.kind == .Newline || p.current.kind == .Semicolon {
+        advance(p)
+    }
+}
+
+skip_newline :: proc(p: ^Parser) {
+    for p.current.kind == .Newline {
         advance(p)
     }
 }
@@ -263,6 +270,7 @@ parse_if_stmt :: proc(p: ^Parser) -> Stmt {
 }
 
 parse_while_stmt :: proc(p: ^Parser) -> Stmt {
+    pos := p.current.pos
     advance(p) // Consume keyword
     condition := parse_expression(p)
     skip_stmt_separator(p)
@@ -273,6 +281,7 @@ parse_while_stmt :: proc(p: ^Parser) -> Stmt {
     body := parse_block_stmt(p)
 
     stmt := WhileStmt {
+        pos       = pos,
         condition = condition,
         body      = BlockStmt(body)
     }
@@ -283,7 +292,10 @@ parse_block_stmt :: proc(p: ^Parser) -> BlockStmt {
     assert(p.current.kind == .OpenBrace)
     advance(p) // Consume {
     skip_stmt_separator(p)
-    if p.current.kind == .CloseBrace do return nil
+    if p.current.kind == .CloseBrace {
+        advance(p) // Consume }
+        return nil
+    }
 
     stmts := parse_program(p)
     advance(p)
@@ -443,8 +455,9 @@ parse_fn :: proc(p: ^Parser, id: Token) -> (FnDeclrStmt, bool) {
 
 parse_params :: proc(p: ^Parser) -> ([]ParamInfo, bool) {
     parse_param :: proc(p: ^Parser) -> (ParamInfo, bool) {
+        skip_newline(p)
+        defer skip_newline(p)
         info: ParamInfo
-        
         if p.current.kind != .Id {
             parse_error(p, "Expected an identifier, got:")
             return {}, false
@@ -478,6 +491,9 @@ parse_params :: proc(p: ^Parser) -> ([]ParamInfo, bool) {
             return params[:], true
         } else if p.current.kind == .Comma {
             advance(p)
+        } else {
+            parse_error(p.current.pos, "Parameters must be separated by a comma")
+            return {}, false
         }
         
     }
@@ -716,7 +732,6 @@ parse_call_expr :: proc(p: ^Parser) -> Expr {
             callee = expr,
             args = args,
         }
-
         expr = Expr{expr.id, expr.pos, node}
     }
 

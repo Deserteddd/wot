@@ -334,7 +334,7 @@ offset_to_pos :: proc(l: ^Lexer, offset: int) -> Pos {
 	return Pos {
         file = l.path,
 		offset = offset,
-		line = line,
+		line = u32(line),
 		column = column,
 	}
 }
