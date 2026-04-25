@@ -21,9 +21,10 @@ Type :: enum {
     Float,
     Int,
     Bool,
+    Char,
 }
 
-Value :: union {
+Value :: union #no_nil {
     None,
     Float,
     Int,
@@ -101,7 +102,7 @@ scope_add :: proc(scope: ^Scope, id: SymbolId, v: Var) -> (overwrote: bool) {
 }
 
 
-format_value :: proc(v: Value) -> string {
+format_value :: #force_inline proc(v: Value) -> string {
     #partial switch value in v {
         case Int, Float:
                 return fmt.tprint(value)
@@ -129,9 +130,10 @@ print_values :: proc(args: []Value, newline: bool) {
 value_type :: proc(v: Value, loc := #caller_location) -> Type {
     #partial switch v in v {
         case Int:       return .Int
-        case Float:       return .Float
+        case Float:     return .Float
         case Bool:      return .Bool
         case None:      return .None
+        case Char:      return .Char
     }
     panic("Undeclared type", loc)
 }
@@ -218,6 +220,7 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
 }
 
 execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
+
     switch id.text {
         case "print":
             args_evaled := make([]Value, len(args), context.temp_allocator)

@@ -1,6 +1,7 @@
-add :: fn(b: int, c: int) -> int {
-	return b + c
+funcc :: fn(a: int, b: int) -> int{
+	return a + b
 }
 
-a := add(4, 5)
-println(a)
+b := funcc(5, funcc(10, 15))
+
+println(b)

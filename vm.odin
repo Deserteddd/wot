@@ -2,8 +2,10 @@ package wot
 
 import "core:fmt"
 import "core:strings"
+import "core:debug/trace"
 
 
+@(private = "file")
 Frame :: struct {
     chunk: ^Chunk,
     pc: int,
@@ -11,61 +13,57 @@ Frame :: struct {
     locals: []Value,
 }
 
+@(private = "file")
 VM :: struct {
     stack: [dynamic]Value,
     frames: [dynamic]Frame,
     globals: map[SymbolId]Value,
     functions: []FunctionIR,
     function_idx: map[SymbolId]u32,
+    builtin_print: SymbolId,
+    builtin_println: SymbolId,
 }
 
+@(private = "file")
 vm: VM
 
-run_ir :: proc(ir: ^ProgramIR) {
-    vm.functions = ir.functions[:]
-    vm.function_idx = ir.function_idx
 
-    append(&vm.frames, Frame {
-        chunk = &ir.entry,
-        pc = 0,
-        stack_base = 0,
-        locals = nil,
-    })
-
-    for !execute() {}
-}
-
-vm_pop :: #force_inline proc(loc := #caller_location) -> Value {
-    if len(vm.stack) == 0 {
-        fmt.eprintln(loc, "popped from empty stack")
-        return None{}
-    }
+@(private = "file")
+vm_pop :: #force_inline proc() -> Value {
     return pop(&vm.stack) 
 }
 
+@(private = "file")
 vm_push :: #force_inline proc(val: Value) { append(&vm.stack, val) }
 
-current_frame :: proc() -> ^Frame {
-    if len(vm.frames) == 0 do return nil
+@(private = "file")
+current_frame :: #force_inline proc() -> ^Frame #no_bounds_check {
     return &vm.frames[len(vm.frames)-1]
 }
 
-call_builtin :: proc(name: string, argc: int) -> (handled: bool) {
-    if name != "print" && name != "println" do return false
-
-    args := make([]Value, argc, context.temp_allocator)
+@(private = "file")
+call_builtin :: proc(sym: SymbolId, argc: int) -> (handled: bool) {
+    if sym != vm.builtin_print && sym != vm.builtin_println do return false
     for i := argc - 1; i >= 0; i -= 1 {
-        args[i] = vm_pop()
+        if i > 0 {
+            fmt.print(" ")
+        }
+        arg := vm_pop()
+        char_arg, is_char_arg := arg.(Char)
+        if is_char_arg do fmt.print(rune(char_arg))
+        else do fmt.print(arg)
     }
 
-    print_values(args, name == "println")
+    if sym == vm.builtin_println {
+        fmt.println()
+    }
     vm_push(None{})
     return true
 }
 
-call_function :: proc(sym: SymbolId, argc: int) {
-    fn_idx, found := vm.function_idx[sym]
-    assert(found)
+@(private = "file")
+call_function :: proc(sym: SymbolId, argc: int) #no_bounds_check {
+    fn_idx := vm.function_idx[sym]
     fn := vm.functions[int(fn_idx)]
 
     locals := make([]Value, len(fn.body.locals), context.allocator)
@@ -85,6 +83,7 @@ call_function :: proc(sym: SymbolId, argc: int) {
     })
 }
 
+@(private = "file")
 binary_op_from_opcode :: #force_inline proc(code: OpCode) -> BinaryOp {
     #partial switch code {
         case .Add: return .Add
@@ -104,153 +103,7 @@ binary_op_from_opcode :: #force_inline proc(code: OpCode) -> BinaryOp {
     panic("Invalid opcode to binary op conversion")
 }
 
-
-
-execute :: proc() -> (halt: bool) {
-    if len(vm.frames) == 0 do return true
-
-    frame := current_frame()
-    if frame == nil do return true
-    if frame.pc < 0 || frame.pc >= len(frame.chunk.code) {
-        _ = pop(&vm.frames)
-        return len(vm.frames) == 0
-    }
-
-    ins := frame.chunk.code[frame.pc]
-    frame.pc += 1
-
-    #partial switch ins.opcode {
-        case .Const:
-            idx := int(bx_of(ins))
-            vm_push(frame.chunk.constants[idx])
-
-        case .LoadLocal:
-            idx := int(bx_of(ins))
-            if idx < 0 || idx >= len(frame.locals) {
-                vm_push(None{})
-            } else {
-                vm_push(frame.locals[idx])
-            }
-
-        case .StoreLocal:
-            idx := int(bx_of(ins))
-            value := vm_pop()
-            if idx >= 0 && idx < len(frame.locals) {
-                frame.locals[idx] = value
-            }
-
-        case .LoadGlobal:
-            idx := int(bx_of(ins))
-            if idx < 0 || idx >= len(frame.chunk.symbols) {
-                vm_push(None{})
-                break
-            }
-            sym := frame.chunk.symbols[idx]
-            value, found := vm.globals[sym]
-            if found {
-                vm_push(value)
-            } else {
-                vm_push(None{})
-            }
-
-        case .StoreGlobal:
-            idx := int(bx_of(ins))
-            if idx < 0 || idx >= len(frame.chunk.symbols) do break
-            sym := frame.chunk.symbols[idx]
-            vm.globals[sym] = vm_pop()
-
-        case .Call:
-            idx := int(bx_of(ins))
-            argc := int(ins.a)
-            name := "<oob>"
-            if idx >= 0 && idx < len(frame.chunk.symbols) {
-                sym := frame.chunk.symbols[idx]
-                name = symbol_name(sym)
-
-                if call_builtin(name, argc) {
-                    break
-                }
-
-                call_function(sym, argc)
-            }
-
-        case .Return:
-            ret := Value(None{})
-            if len(vm.stack) > frame.stack_base {
-                ret = vm_pop()
-            }
-
-            resize(&vm.stack, frame.stack_base)
-            _ = pop(&vm.frames)
-            if len(vm.frames) == 0 {
-                halt = true
-            } else {
-                vm_push(ret)
-            }
-
-        case .Add, .Sub, .Mul, .Div, .Mod, .CmpEq, .NotEq, .Lt, .Gt, .LtEq, .GtEq, .And, .Or:
-            lhs := vm_pop()
-            rhs := vm_pop()
-            op := binary_op_from_opcode(ins.opcode)
-            res, ok := apply_op(op, rhs, lhs); assert(ok)
-            vm_push(res)
-        case .Jump:
-            frame.pc += int(sbx_of(ins))
-        case .JumpIfFalse:
-            value := vm_pop().(Bool)
-            if !value do frame.pc += int(sbx_of(ins))
-        case .Neg:
-            operand := vm_pop()
-            res, ok := apply_unary_op(.Sub, operand); assert(ok)
-            vm_push(res)
-        case .Not:
-            operand := vm_pop()
-            res, ok := apply_unary_op(.Not, operand); assert(ok)
-            vm_push(res)
-
-        case .Halt:
-            _ = pop(&vm.frames)
-            halt = len(vm.frames) == 0
-
-        
-    }
-    return
-}
-
-
-fmt_ir :: proc(ir: ProgramIR) -> string {
-    b: strings.Builder
-    strings.builder_init(&b)
-    strings.write_string(&b, fmt.tprintfln("== entry =="))
-
-    for ins, i in ir.entry.code {
-        strings.write_string(&b, fmt.tprintf("[%03d] ",  i))
-        strings.write_string(&b, tprint_instruction(ir.entry, ins, i))
-
-    }
-
-    for fn in ir.functions {
-        strings.write_rune(&b, '\n')
-        strings.write_string(&b, fmt.tprintf("== fn %v(", symbol_name(fn.name)))
-        for param, i in fn.params {
-            strings.write_string(&b, fmt.tprintf("%v: %v", symbol_name(param.id.sym), param.type))
-            if i != len(fn.params) - 1 {
-                strings.write_string(&b, ", ")
-            }
-        }
-
-        strings.write_rune(&b, ')')
-        if fn.return_type != "" do strings.write_string(&b, fmt.tprintf(" -> %s", fn.return_type))
-        strings.write_string(&b, " ==\n")
-        for ins, i in fn.body.code {
-            strings.write_string(&b, fmt.tprintf("[%03d] ",  i))
-            strings.write_string(&b, tprint_instruction(fn.body, ins, i))
-        }
-    }
-
-    return strings.to_string(b)
-}
-
+@(private = "file")
 tprint_instruction :: proc(chunk: Chunk, ins: Instruction, i: int) -> string {
     #partial switch ins.opcode {
         case .Const:
@@ -285,4 +138,151 @@ tprint_instruction :: proc(chunk: Chunk, ins: Instruction, i: int) -> string {
         case:
             return fmt.tprintfln("%v", ins.opcode)
     }
+}
+
+fmt_ir :: proc(ir: ProgramIR) -> string {
+    b: strings.Builder
+    strings.builder_init(&b)
+    strings.write_string(&b, fmt.tprintfln("== entry =="))
+
+    for ins, i in ir.entry.code {
+        strings.write_string(&b, fmt.tprintf("[%03d] ",  i))
+        strings.write_string(&b, tprint_instruction(ir.entry, ins, i))
+
+    }
+
+    for fn in ir.functions {
+        strings.write_rune(&b, '\n')
+        strings.write_string(&b, fmt.tprintf("== fn %v(", symbol_name(fn.name)))
+        for param, i in fn.params {
+            strings.write_string(&b, fmt.tprintf("%v: %v", symbol_name(param.id.sym), param.type))
+            if i != len(fn.params) - 1 {
+                strings.write_string(&b, ", ")
+            }
+        }
+
+        strings.write_rune(&b, ')')
+        if fn.return_type != "" do strings.write_string(&b, fmt.tprintf(" -> %s", fn.return_type))
+        strings.write_string(&b, " ==\n")
+        for ins, i in fn.body.code {
+            strings.write_string(&b, fmt.tprintf("[%03d] ",  i))
+            strings.write_string(&b, tprint_instruction(fn.body, ins, i))
+        }
+    }
+
+    return strings.to_string(b)
+}
+
+execute :: proc() -> (halt: bool) #no_bounds_check {
+    if len(vm.frames) == 0 do return true
+
+    frame := current_frame()
+    if frame == nil do return true
+
+    ins := frame.chunk.code[frame.pc]
+    frame.pc += 1
+
+    #partial switch ins.opcode {
+        case .Const:
+            idx := int(bx_of(ins))
+            vm_push(frame.chunk.constants[idx])
+
+        case .LoadLocal:
+            idx := int(bx_of(ins))
+            vm_push(frame.locals[idx])
+
+        case .StoreLocal:
+            idx := int(bx_of(ins))
+            value := vm_pop()
+            frame.locals[idx] = value
+
+        case .LoadGlobal:
+            idx := int(bx_of(ins))
+            sym := frame.chunk.symbols[idx]
+            value := vm.globals[sym]
+            vm_push(value)
+
+        case .StoreGlobal:
+            idx := int(bx_of(ins))
+            sym := frame.chunk.symbols[idx]
+            vm.globals[sym] = vm_pop()
+
+        case .Call:
+            idx := int(bx_of(ins))
+            argc := int(ins.a)
+            sym := frame.chunk.symbols[idx]
+
+            if call_builtin(sym, argc) do break
+            call_function(sym, argc)
+
+        case .Return:
+            ret := Value(None{})
+            if len(vm.stack) > frame.stack_base {
+                ret = vm_pop()
+            }
+
+            resize(&vm.stack, frame.stack_base)
+            _ = pop(&vm.frames)
+            if len(vm.frames) == 0 {
+                halt = true
+            } else {
+                vm_push(ret)
+            }
+
+        case .Add, .Sub, .Mul, .Div, .Mod, .CmpEq, .NotEq, .Lt, .Gt, .LtEq, .GtEq:
+            lhs := vm_pop()
+            rhs := vm_pop()
+            op := binary_op_from_opcode(ins.opcode)
+            res, ok := apply_op(op, rhs, lhs)
+            _ = ok
+            vm_push(res)
+        case .And:
+            lhs := vm_pop()
+            rhs := vm_pop()
+            vm_push(lhs.(Bool) && rhs.(Bool))
+        case .Or:
+            lhs := vm_pop()
+            rhs := vm_pop()
+            vm_push(lhs.(Bool) || rhs.(Bool))
+
+        case .Jump:
+            frame.pc += int(sbx_of(ins))
+        case .JumpIfFalse:
+            value := vm_pop().(Bool)
+            if !value do frame.pc += int(sbx_of(ins))
+        case .Neg:
+            operand := vm_pop()
+            res, ok := apply_unary_op(.Sub, operand)
+            _ = ok
+            vm_push(res)
+        case .Not:
+            operand := vm_pop()
+            res, ok := apply_unary_op(.Not, operand)
+            _ = ok
+            vm_push(res)
+
+        case .Halt:
+            _ = pop(&vm.frames)
+            halt = len(vm.frames) == 0
+
+        
+    }
+    return
+}
+
+run_ir :: proc(ir: ^ProgramIR) #no_bounds_check {
+    vm.builtin_print   = symbol_intern("print")
+    vm.builtin_println = symbol_intern("println")
+
+    vm.functions = ir.functions[:]
+    vm.function_idx = ir.function_idx
+
+    append(&vm.frames, Frame {
+        chunk = &ir.entry,
+        pc = 0,
+        stack_base = 0,
+        locals = nil,
+    })
+
+    for !execute() {}
 }

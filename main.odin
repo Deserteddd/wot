@@ -8,6 +8,7 @@ import vmem "core:mem/virtual"
 import "base:runtime"
 import "core:slice"
 
+
 main :: proc() {
     start := time.now()
     arena: vmem.Arena
@@ -24,12 +25,18 @@ main :: proc() {
 		fmt.eprintln("Failed to read source:", err)
 		return
 	}
+
     lexer: Lexer
     init_lexer(&lexer, string(input), os.args[1])
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
-    ir := generate_program_ir(program)
+
+    ir: ProgramIR
+    if slice.contains(os.args, "-vm") {
+        ir = generate_program_ir(program)
+    }
+    free_all(context.temp_allocator)
     print_compiler_stage_time(&start, "Compiled")
 
     if slice.contains(os.args, "-vm") {
@@ -39,6 +46,7 @@ main :: proc() {
         run_ast(program)
         print_compiler_stage_time(&start, "Ast ran")
     }
+
     if slice.contains(os.args, "-dump") {
         dump_name := fmt.tprintf("%s_dump.txt", filepath.stem(os.args[1]))
         dump_path := fmt.tprintf("%s%c%s", filepath.dir(os.args[1]), filepath.SEPARATOR, dump_name)

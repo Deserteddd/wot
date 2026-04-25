@@ -9,24 +9,28 @@ while y <= 1 {
 		max_iter := 100
 
 		while (zx*zx + zy*zy <= 4) && (iter < max_iter) {
-			xtemp := zx*zx - zy*zy + x
+			xtemp := a_function(zx, zy, x)
 			zy = 2*zx*zy + y
 			zx = xtemp
 			iter += 1
 			iterations += 1
 		}
 
-		if iter == max_iter {
-			print('#')
-		} else {
-			print(' ')
-		}
+		// if iter == max_iter {
+		// 	print('#')
+		// } else {
+		// 	print(' ')
+		// }
 
 		x += 0.0315
 	}
 
-	println()
+	// println()
 	y += 0.05
+}
+
+a_function :: fn(zx: float, zy: float, x: float) -> float {
+	return zx*zx - zy*zy + x
 }
 
 println(iterations)

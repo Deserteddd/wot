@@ -48,7 +48,6 @@ Chunk :: struct {
     symbol_idx: map[SymbolId]u32,
 }
 
-// ProgramIR is the minimal IR output container.
 FunctionIR :: struct {
     name:        SymbolId,
     params:      []ParamInfo,
@@ -56,7 +55,6 @@ FunctionIR :: struct {
     body:        Chunk,
 }
 
-// ProgramIR is the minimal IR output container.
 ProgramIR :: struct {
     entry:        Chunk,
     functions:    [dynamic]FunctionIR,

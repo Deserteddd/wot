@@ -847,6 +847,7 @@ type_from_string :: #force_inline proc(typename: string) -> Type {
         case "int":     return .Int
         case "float":   return .Float
         case "bool":    return .Bool
+        case "char":    return .Char
         case:           return .None 
     }
 }
