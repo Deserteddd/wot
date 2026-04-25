@@ -9,7 +9,7 @@ while y <= 1 {
 		max_iter := 100
 
 		while (zx*zx + zy*zy <= 4) && (iter < max_iter) {
-			xtemp := do_stuff(zx, zy, x)
+			xtemp := zx*zx - zy*zy + x
 			zy = 2*zx*zy + y
 			zx = xtemp
 			iter += 1
@@ -27,10 +27,6 @@ while y <= 1 {
 
 	println()
 	y += 0.05
-}
-
-do_stuff :: fn(zx: float, zy: float, x: float) -> float {
-	return zx*zx - zy*zy + x
 }
 
 println(iterations)

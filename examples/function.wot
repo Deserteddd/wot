@@ -1,2 +1,6 @@
-print('#')
-print(' ')
+add :: fn(b: int, c: int) -> int {
+	return b + c
+}
+
+a := add(4, 5)
+println(a)

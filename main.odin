@@ -1,6 +1,7 @@
 package wot
 
 import os "core:os/os2"
+import filepath "core:path/filepath"
 import "core:fmt"
 import "core:time"
 import vmem "core:mem/virtual"
@@ -29,19 +30,29 @@ main :: proc() {
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
     ir := generate_program_ir(program)
-    print_compiler_stage_time("Compiled", &start)
+    print_compiler_stage_time(&start, "Compiled")
 
     if slice.contains(os.args, "-vm") {
         run_ir(&ir)
-        print_compiler_stage_time("VM ran", &start)
+        print_compiler_stage_time(&start, "VM ran")
     } else {
         run_ast(program)
-        print_compiler_stage_time("Ast ran", &start)
+        print_compiler_stage_time(&start, "Ast ran")
+    }
+    if slice.contains(os.args, "-dump") {
+        dump_name := fmt.tprintf("%s_dump.txt", filepath.stem(os.args[1]))
+        dump_path := fmt.tprintf("%s%c%s", filepath.dir(os.args[1]), filepath.SEPARATOR, dump_name)
+        dump_err := os.write_entire_file_from_string(dump_path, fmt_ir(ir))
+        if dump_err != nil {
+            fmt.eprintfln("Failed to write IR dump to %v: %v", dump_path, dump_err)
+            return
+        }
+        fmt.printfln("Wrote IR dump to: %v", dump_path)
     }
 
 }
 
-print_compiler_stage_time :: proc(stage: string, start: ^time.Time) {
+print_compiler_stage_time :: proc(start: ^time.Time, stage: string) {
     elapsed := time.since(start^)
     fmt.println("--------------------------------------")
     fmt.printfln("%v in: %v", stage, elapsed)

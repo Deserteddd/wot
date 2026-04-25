@@ -1,6 +1,7 @@
 package wot
 
 import "core:fmt"
+import "core:strings"
 
 
 Frame :: struct {
@@ -17,8 +18,6 @@ VM :: struct {
     functions: []FunctionIR,
     function_idx: map[SymbolId]u32,
 }
-
-
 
 vm: VM
 
@@ -219,46 +218,62 @@ execute :: proc() -> (halt: bool) {
 }
 
 
+fmt_ir :: proc(ir: ProgramIR) -> string {
+    b: strings.Builder
+    strings.builder_init(&b)
+    strings.write_string(&b, fmt.tprintfln("== entry =="))
 
-print_ir :: proc(ir: ProgramIR) {
-    fmt.printfln("== entry ==")
     for ins, i in ir.entry.code {
-        print_instruction(ir.entry, ins, i)
+        strings.write_string(&b, fmt.tprintf("[%03d] ",  i))
+        strings.write_string(&b, tprint_instruction(ir.entry, ins, i))
 
     }
 
     for fn in ir.functions {
-        fmt.printfln("== fn %s(%d) -> %s ==", symbol_name(fn.name), len(fn.params), fn.return_type)
-        for ins, i in fn.body.code {
-            print_instruction(fn.body, ins, i)
+        strings.write_rune(&b, '\n')
+        strings.write_string(&b, fmt.tprintf("== fn %v(", symbol_name(fn.name)))
+        for param, i in fn.params {
+            strings.write_string(&b, fmt.tprintf("%v: %v", symbol_name(param.id.sym), param.type))
+            if i != len(fn.params) - 1 {
+                strings.write_string(&b, ", ")
+            }
         }
 
+        strings.write_rune(&b, ')')
+        if fn.return_type != "" do strings.write_string(&b, fmt.tprintf(" -> %s", fn.return_type))
+        strings.write_string(&b, " ==\n")
+        for ins, i in fn.body.code {
+            strings.write_string(&b, fmt.tprintf("[%03d] ",  i))
+            strings.write_string(&b, tprint_instruction(fn.body, ins, i))
+        }
     }
+
+    return strings.to_string(b)
 }
 
-print_instruction :: proc(chunk: Chunk, ins: Instruction, i: int) {
+tprint_instruction :: proc(chunk: Chunk, ins: Instruction, i: int) -> string {
     #partial switch ins.opcode {
         case .Const:
             idx := int(bx_of(ins))
-            fmt.printfln("Const (%v)", chunk.constants[idx])
+            return fmt.tprintfln("Const (%v)", chunk.constants[idx])
         case .LoadLocal, .StoreLocal:
             idx := int(bx_of(ins))
             name := "<oob>"
             if idx >= 0 && idx < len(chunk.locals) {
                 name = symbol_name(chunk.locals[idx])
             }
-            fmt.printfln("%v %s", ins.opcode, name)
+            return fmt.tprintfln("%v %s", ins.opcode, name)
         case .LoadGlobal, .StoreGlobal:
             idx := int(bx_of(ins))
             name := "<oob>"
             if idx >= 0 && idx < len(chunk.symbols) {
                 name = symbol_name(chunk.symbols[idx])
             }
-            fmt.printfln("%v %s", ins.opcode, name)
+            return fmt.tprintfln("%v \'%s\'", ins.opcode, name)
         case .Jump, .JumpIfFalse:
             off := int(sbx_of(ins))
             target := i + 1 + off
-            fmt.printfln("%v -> [%03d]", ins.opcode, target)
+            return fmt.tprintfln("%v -> [%03d]", ins.opcode, target)
         case .Call:
             idx := int(bx_of(ins))
             argc := int(ins.a)
@@ -266,8 +281,8 @@ print_instruction :: proc(chunk: Chunk, ins: Instruction, i: int) {
             if idx >= 0 && idx < len(chunk.symbols) {
                 name = symbol_name(chunk.symbols[idx])
             }
-            fmt.printfln("Call %s (%d args)", name, argc)
+            return fmt.tprintfln("Call \"%s\" (%d args)", name, argc)
         case:
-            fmt.printfln("%v", ins.opcode)
+            return fmt.tprintfln("%v", ins.opcode)
     }
 }
