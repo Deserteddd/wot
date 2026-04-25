@@ -286,7 +286,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
     }
 }
 
-is_legal_cast :: proc(from: Type, to: Type) -> (legal: bool) {
+is_legal_cast :: #force_inline proc(from: Type, to: Type) -> (legal: bool) {
     if from == to do return true
     #partial switch from {
         case .Int:
@@ -297,7 +297,7 @@ is_legal_cast :: proc(from: Type, to: Type) -> (legal: bool) {
     return
 }
 
-apply_unary_op :: proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
+apply_unary_op :: #force_inline proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
     ok = true
     switch op {
         case .Not:
@@ -378,7 +378,7 @@ apply_bool_op :: proc(op: BinaryOp, a, b: Bool) -> (val: Value, ok: bool) {
     return
 }
 
-apply_op :: proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
+apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
     #partial switch &left in v1 {
         case Int:
             right, right_ok := v2.(Int)
@@ -505,7 +505,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Va
     return return_value
 }
 
-run :: proc(program: BlockStmt) -> Value {
+run_ast :: proc(program: BlockStmt) -> Value {
     for stmt in program {
         if declr, declr_ok := stmt.(DeclrStmt); declr_ok {
             if fn_declr, fn_declr_ok := declr.variant.(FnDeclrStmt); fn_declr_ok {

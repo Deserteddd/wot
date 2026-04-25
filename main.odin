@@ -28,11 +28,23 @@ main :: proc() {
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
-    run(program)
     ir := generate_program_ir(program)
-    pseudo_run_program_ir(&ir)
-    compile_time := time.since(start)
+    print_compiler_stage_time("Compiled", &start)
+
+    if slice.contains(os.args, "-vm") {
+        run_ir(&ir)
+        print_compiler_stage_time("VM ran", &start)
+    } else {
+        run_ast(program)
+        print_compiler_stage_time("Ast ran", &start)
+    }
+
+}
+
+print_compiler_stage_time :: proc(stage: string, start: ^time.Time) {
+    elapsed := time.since(start^)
     fmt.println("--------------------------------------")
-    fmt.printfln("Compiled in: %v", compile_time)
+    fmt.printfln("%v in: %v", stage, elapsed)
     fmt.println("--------------------------------------")
+    start^ = time.now()
 }

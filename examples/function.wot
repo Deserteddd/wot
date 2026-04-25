@@ -1,11 +1,2 @@
-
-add :: fn(
-    n1: int,
-    n2: int
-) -> int { 
-    a := n1 + n2
-    return a 
-}
-
-
-println(4+4*add(1, 2))
+print('#')
+print(' ')

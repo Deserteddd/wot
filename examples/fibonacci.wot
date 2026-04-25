@@ -1,5 +1,4 @@
-target := 10
-n := target
+n := 10
 a := 0
 b := 0
 next := 1
@@ -11,4 +10,4 @@ while n > 0 {
     n -= 1
 }
 
-printfln("%vth Fibonacci number: %v", target, b)
+println(b)

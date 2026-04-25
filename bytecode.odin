@@ -1,6 +1,7 @@
 package wot
 
 import "core:fmt"
+import os "core:os/os2"
 
 // OpCode is the minimal instruction set for declarations, assignments, and arithmetic.
 OpCode :: enum u8 {
@@ -25,6 +26,10 @@ OpCode :: enum u8 {
     Jump,
     JumpIfFalse,
     Call,
+    Neg,
+    Not,
+    And,
+    Or,
 }
 
 // Instruction is a fixed-width 32-bit instruction with named fields.
@@ -183,6 +188,18 @@ emit_binary_op :: proc(chunk: ^Chunk, op: BinaryOp, line: u32) {
         case .Gt: emit_abc(chunk, .Gt, 0, 0, 0, line)
         case .Lt_Eq: emit_abc(chunk, .LtEq, 0, 0, 0, line)
         case .Gt_Eq: emit_abc(chunk, .GtEq, 0, 0, 0, line)
+        case .And: emit_abc(chunk, .And, 0, 0, 0, line)
+        case .Or: emit_abc(chunk, .Or, 0, 0, 0, line)
+        case:
+            fmt.eprintln("Invalid binary op:", op)
+            os.exit(1)
+    }
+}
+
+emit_unary_op :: proc(chunk: ^Chunk, op: UnaryOp, line: u32) {
+    #partial switch op {
+        case .Sub: emit_abc(chunk, .Neg, 0, 0, 0, line)
+        case .Not: emit_abc(chunk, .Not, 0, 0, 0, line)
         case:
             panic("Unsupported binary operator in IR")
     }
@@ -192,13 +209,16 @@ emit_binary_op :: proc(chunk: ^Chunk, op: BinaryOp, line: u32) {
 compile_expr :: proc(chunk: ^Chunk, expr: Expr, locals: ^map[SymbolId]u32 = nil) {
     #partial switch value in expr.variant {
         case Int:
-            idx := add_constant(chunk, Value(Int(value)))
+            idx := add_constant(chunk, Int(value))
             emit_abx(chunk, .Const, 0, idx, expr.pos.line)
         case Float:
-            idx := add_constant(chunk, Value(Float(value)))
+            idx := add_constant(chunk, Float(value))
             emit_abx(chunk, .Const, 0, idx, expr.pos.line)
         case Bool:
-            idx := add_constant(chunk, Value(Bool(value)))
+            idx := add_constant(chunk, Bool(value))
+            emit_abx(chunk, .Const, 0, idx, expr.pos.line)
+        case Char:
+            idx := add_constant(chunk, Char(value))
             emit_abx(chunk, .Const, 0, idx, expr.pos.line)
         case Identifier:
             if locals != nil {
@@ -221,6 +241,9 @@ compile_expr :: proc(chunk: ^Chunk, expr: Expr, locals: ^map[SymbolId]u32 = nil)
 
             callee_slot := add_symbol(chunk, value.callee.id)
             emit_abx(chunk, .Call, u8(len(value.args)), callee_slot, expr.pos.line)
+        case ^UnaryExpr:
+            compile_expr(chunk, value.expr, locals)
+            emit_unary_op(chunk, value.op, expr.pos.line)
         case:
             panic("Only literals, identifiers, and binary expressions are supported")
     }
@@ -431,7 +454,6 @@ generate_program_ir :: proc(program: BlockStmt) -> ProgramIR {
                 continue
             }
         }
-
         compile_stmt(&ir.entry, stmt)
     }
     emit_abc(&ir.entry, .Halt, 0, 0, 0)
@@ -440,58 +462,5 @@ generate_program_ir :: proc(program: BlockStmt) -> ProgramIR {
         entry = ir.entry,
         functions = ir.functions,
         function_idx = ir.function_idx,
-    }
-}
-
-// pseudo_run_program_ir prints the emitted minimal IR in a readable form.
-pseudo_run_program_ir :: proc(ir: ^ProgramIR) {
-    fmt.printfln("== entry ==")
-    for ins, i in ir.entry.code {
-        print_instruction(ir.entry, ins, i)
-
-    }
-
-    for fn in ir.functions {
-        fmt.printfln("== fn %s(%d) -> %s ==", symbol_name(fn.name), len(fn.params), fn.return_type)
-        for ins, i in fn.body.code {
-            print_instruction(fn.body, ins, i)
-        }
-
-    }
-}
-
-print_instruction :: proc(chunk: Chunk, ins: Instruction, i: int) {
-    #partial switch ins.opcode {
-        case .Const:
-            idx := int(bx_of(ins))
-            fmt.printfln("[%03d] Const\t\t(%v)", i, chunk.constants[idx])
-        case .LoadLocal, .StoreLocal:
-            idx := int(bx_of(ins))
-            name := "<oob>"
-            if idx >= 0 && idx < len(chunk.locals) {
-                name = symbol_name(chunk.locals[idx])
-            }
-            fmt.printfln("[%03d] %v \t%s", i, ins.opcode, name)
-        case .LoadGlobal, .StoreGlobal:
-            idx := int(bx_of(ins))
-            name := "<oob>"
-            if idx >= 0 && idx < len(chunk.symbols) {
-                name = symbol_name(chunk.symbols[idx])
-            }
-            fmt.printfln("[%03d] %v\t%s", i, ins.opcode, name)
-        case .Jump, .JumpIfFalse:
-            off := int(sbx_of(ins))
-            target := i + 1 + off
-            fmt.printfln("[%03d] %v ->   \t[%03d]", i, ins.opcode, target)
-        case .Call:
-            idx := int(bx_of(ins))
-            argc := int(ins.a)
-            name := "<oob>"
-            if idx >= 0 && idx < len(chunk.symbols) {
-                name = symbol_name(chunk.symbols[idx])
-            }
-            fmt.printfln("[%03d] Call\t\t%s (%d args)", i, name, argc)
-        case:
-            fmt.printfln("[%03d] %v", i, ins.opcode)
     }
 }

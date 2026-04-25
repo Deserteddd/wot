@@ -501,7 +501,7 @@ parse_params :: proc(p: ^Parser) -> ([]ParamInfo, bool) {
 }
 
 parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
-    args, ok := parse_call_args(p, id.text)
+    args, ok := parse_call_args(p, id.sym)
     if !ok do return nil
     stmt := CallStmt {
         id   = id,
@@ -510,7 +510,7 @@ parse_call :: proc(p: ^Parser, id: Token) -> Stmt {
     return stmt
 }
 
-parse_call_args :: proc(p: ^Parser, callee_name: string) -> ([]Expr, bool) {
+parse_call_args :: proc(p: ^Parser, callee: SymbolId) -> ([]Expr, bool) {
     args: [dynamic]Expr
 
     assert(p.current.kind == .OpenParen)
@@ -521,22 +521,21 @@ parse_call_args :: proc(p: ^Parser, callee_name: string) -> ([]Expr, bool) {
             expr := parse_expression(p)
             if expr.variant == nil {
                 parse_error(p, "Invalid argument in call to")
-                fmt.eprintfln("%v()", callee_name)
+                fmt.eprintfln("%v()", symbol_name(callee))
                 return nil, false
             }
             append(&args, expr)
 
             if p.current.kind == .CloseParen do break
             if p.current.kind != .Comma {
-                parse_error(p, "Expected ',' or ')' after argument in call to")
-                fmt.eprintfln("%v()", callee_name)
+                parse_error(p.current.pos, "Expected ',' or ')', got: %w", p.current.text)
                 return nil, false
             }
 
             advance(p) // consume ','
             if p.current.kind == .CloseParen {
                 parse_error(p, "Trailing comma is not allowed in call to")
-                fmt.eprintfln("%v()", callee_name)
+                fmt.eprintfln("%v()", symbol_name(callee))
                 return nil, false
             }
         }
@@ -720,11 +719,11 @@ parse_unary :: proc(p: ^Parser) -> Expr {
     return parse_call_expr(p)
 }
 
-parse_call_expr :: proc(p: ^Parser) -> Expr {
+parse_call_expr :: proc(p: ^Parser, loc := #caller_location) -> Expr {
     expr := parse_factor(p)
 
     for p.current.kind == .OpenParen {
-        args, ok := parse_call_args(p, "expression")
+        args, ok := parse_call_args(p, expr.id)
         if !ok do return {}
 
         node := new(CallExpr)
