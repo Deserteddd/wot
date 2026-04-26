@@ -1,7 +1,0 @@
-funcc :: fn(a: int, b: int) -> int{
-	return a + b
-}
-
-b := funcc(5, funcc(10, 15))
-
-println(b)

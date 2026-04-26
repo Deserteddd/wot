@@ -1,7 +1,7 @@
 package wot
 
 import "core:fmt"
-import os "core:os/os2"
+import "core:os"
 
 // OpCode is the minimal instruction set for declarations, assignments, and arithmetic.
 OpCode :: enum u8 {

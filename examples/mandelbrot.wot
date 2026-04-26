@@ -16,16 +16,16 @@ while y <= 1 {
 			iterations += 1
 		}
 
-		// if iter == max_iter {
-		// 	print('#')
-		// } else {
-		// 	print(' ')
-		// }
+		if iter == max_iter {
+			print('#')
+		} else {
+			print(' ')
+		}
 
 		x += 0.0315
 	}
 
-	// println()
+	println()
 	y += 0.05
 }
 

@@ -25,14 +25,14 @@ while y <= 1:
 			iterations += 1
 		
 
-		# if iter == max_iter:
-			# print('#', end='')
-		# else:
-			# print(' ', end='')
+		if iter == max_iter:
+			print('#', end='')
+		else:
+			print(' ', end='')
 
 		x += 0.0315
 
-	# print()
+	print()
 	y += 0.05
 
 

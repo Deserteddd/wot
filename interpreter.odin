@@ -1,7 +1,7 @@
 package wot
 
 import "core:fmt"
-import os "core:os/os2"
+import "core:os"
 import "core:reflect"
 import "core:strings"
 import "core:unicode/utf8"

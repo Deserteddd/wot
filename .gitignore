@@ -1,5 +1,5 @@
-/input.txt
 /*.exe
 /*.pdb
+/*.gz
 /*.rdi
 /examples/*_dump.txt

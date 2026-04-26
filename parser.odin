@@ -2,7 +2,7 @@ package wot
 
 import "core:fmt"
 import "core:strconv"
-import os "core:os/os2"
+import "core:os"
 import "core:strings"
 
 

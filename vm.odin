@@ -2,8 +2,9 @@ package wot
 
 import "core:fmt"
 import "core:strings"
-import "core:debug/trace"
-
+import "core:bufio"
+import "core:os"
+import "core:strconv"
 
 @(private = "file")
 Frame :: struct {
@@ -15,13 +16,15 @@ Frame :: struct {
 
 @(private = "file")
 VM :: struct {
-    stack: [dynamic]Value,
-    frames: [dynamic]Frame,
+    stack: [dynamic; 1024]Value,
+    frames: [dynamic; 128]Frame,
     globals: map[SymbolId]Value,
     functions: []FunctionIR,
     function_idx: map[SymbolId]u32,
     builtin_print: SymbolId,
     builtin_println: SymbolId,
+    writer: bufio.Writer,
+    flush: bool
 }
 
 @(private = "file")
@@ -34,7 +37,7 @@ vm_pop :: #force_inline proc() -> Value {
 }
 
 @(private = "file")
-vm_push :: #force_inline proc(val: Value) { append(&vm.stack, val) }
+vm_push :: #force_inline proc(val: Value) #no_bounds_check { append(&vm.stack, val) }
 
 @(private = "file")
 current_frame :: #force_inline proc() -> ^Frame #no_bounds_check {
@@ -46,18 +49,27 @@ call_builtin :: proc(sym: SymbolId, argc: int) -> (handled: bool) {
     if sym != vm.builtin_print && sym != vm.builtin_println do return false
     for i := argc - 1; i >= 0; i -= 1 {
         if i > 0 {
-            fmt.print(" ")
+            fmt.print(" ", flush = false)
         }
         arg := vm_pop()
-        char_arg, is_char_arg := arg.(Char)
-        if is_char_arg do fmt.print(rune(char_arg))
-        else do fmt.print(arg)
+        #partial switch a in arg {
+            case Float: bufio.writer_write_rune(&vm.writer, rune(a))
+            case Int:   
+                buf: [16]byte
+                strconv.write_int(buf[:], i64(a), 10)
+                bufio.writer_write(&vm.writer, buf[:])
+            case Bool:  bufio.writer_write_string(&vm.writer, a ? "true" : "false")
+            case Char:  
+                bufio.writer_write_byte(&vm.writer, byte(a))
+                if a == '\n' do vm.flush = true
+            case None:  bufio.writer_write_string(&vm.writer, "None")
+        }
     }
 
     if sym == vm.builtin_println {
-        fmt.println()
+        bufio.writer_write_byte(&vm.writer, '\n')
+        vm.flush = true
     }
-    vm_push(None{})
     return true
 }
 
@@ -274,6 +286,9 @@ run_ir :: proc(ir: ^ProgramIR) #no_bounds_check {
     vm.builtin_print   = symbol_intern("print")
     vm.builtin_println = symbol_intern("println")
 
+    buf: [1024]byte
+    bufio.writer_init_with_buf(&vm.writer, os.to_writer(os.stdout), buf[:])
+    defer bufio.writer_flush(&vm.writer)
     vm.functions = ir.functions[:]
     vm.function_idx = ir.function_idx
 
@@ -284,5 +299,10 @@ run_ir :: proc(ir: ^ProgramIR) #no_bounds_check {
         locals = nil,
     })
 
-    for !execute() {}
+    for !execute() {
+        if vm.flush {
+            bufio.writer_flush(&vm.writer)
+            vm.flush = false
+        }
+    }
 }

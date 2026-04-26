@@ -2,7 +2,7 @@
 package wot
 
 import "core:fmt"
-import os "core:os/os2"
+import "core:os"
 
 SymbolId :: distinct u16
 
