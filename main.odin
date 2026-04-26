@@ -10,6 +10,11 @@ import "core:slice"
 
 
 main :: proc() {
+    a := 5
+    b := &a
+    c := &b
+    d := c^^ * 1
+
     start := time.now()
     arena: vmem.Arena
     err := vmem.arena_init_growing(&arena)
@@ -43,7 +48,6 @@ main :: proc() {
     print_compiler_stage_time(&start, "Compiled")
 
     if slice.contains(os.args, "-vm") {
-
         if slice.contains(os.args, "-dump") {
             dump_name := fmt.tprintf("%s_dump.txt", filepath.stem(os.args[1]))
             dump_path := fmt.tprintf("%s%c%s", filepath.dir(os.args[1]), filepath.SEPARATOR, dump_name)

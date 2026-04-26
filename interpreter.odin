@@ -2,7 +2,6 @@ package wot
 
 import "core:fmt"
 import "core:os"
-import "core:reflect"
 import "core:strings"
 import "core:unicode/utf8"
 
@@ -22,6 +21,7 @@ Type :: enum {
     Int,
     Bool,
     Char,
+    Reference,
 }
 
 Value :: union #no_nil {
@@ -29,7 +29,8 @@ Value :: union #no_nil {
     Float,
     Int,
     Char,
-    Bool
+    Bool,
+    ^Value
 }
 
 Scope_Kind :: enum {
@@ -102,16 +103,19 @@ scope_add :: proc(scope: ^Scope, id: SymbolId, v: Var) -> (overwrote: bool) {
 }
 
 
-format_value :: #force_inline proc(v: Value) -> string {
+format_value :: proc(v: Value) -> string {
     #partial switch value in v {
         case Int, Float:
-                return fmt.tprint(value)
+            return fmt.tprint(value)
         case Char:
-                return fmt.tprint(rune(value))
+            return fmt.tprint(rune(value))
         case Bool:
-                return fmt.tprintf("%t", value)
+            return fmt.tprintf("%t", value)
+        case ^Value:
+            return fmt.tprint(value)
+
     }
-    panic("What")
+    return "Invalid"
 }
 
 print_values :: proc(args: []Value, newline: bool) {
@@ -134,6 +138,7 @@ value_type :: proc(v: Value, loc := #caller_location) -> Type {
         case Bool:      return .Bool
         case None:      return .None
         case Char:      return .Char
+        case ^Value:    return .Reference
     }
     panic("Undeclared type", loc)
 }
@@ -156,15 +161,47 @@ runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_locatio
     if ODIN_DEBUG {
         fmt.eprintf("%v ", loc)
     }
-	fmt.eprintf("Runtime error: %s(%d:%d) ", pos.file, pos.line, pos.column)
+    fmt.eprint("Runtime error: ")
+	if pos != {} do fmt.eprintf("%s(%d:%d) ", pos.file, pos.line, pos.column)
 	fmt.eprintf(msg, ..args)
 	fmt.eprintf("\n")
     os.exit(1)
 }
 
+resolve_lvalue_pointer :: proc(e: Expr, scope: ^Scope) -> ^Value {
+    #partial switch v in e.variant {
+        case Identifier:
+            variable := scope_fetch(scope, e.id)
+            if variable == nil do runtime_error(
+                e.pos,
+                "Undeclared identifier %w",
+                symbol_name(e.id),
+            )
+            return &variable.value
+        case DerefExpr:
+            if v.expr == nil do runtime_error(e.pos, "Invalid dereference target")
+            ref_val := eval(v.expr^, scope)
+            ref, ok := ref_val.(^Value)
+            if !ok do runtime_error(e.pos, "Cannot dereference non-reference value")
+            return ref
+        case:
+            runtime_error(e.pos, "Expression is not addressable")
+            return nil
+    }
+}
+
 eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
     result: Value
     switch v in e.variant {
+        case RefExpr:
+            if v.expr == nil do runtime_error(e.pos, "Invalid reference target")
+            result = resolve_lvalue_pointer(v.expr^, scope)
+        case DerefExpr:
+            if v.expr == nil do runtime_error(e.pos, "Invalid dereference target")
+            ref_val := eval(v.expr^, scope)
+            ref, ok := ref_val.(^Value)
+            if !ok do runtime_error(e.pos, "Cannot dereference non-reference value")
+            result = ref^
         case Int:
             result = Int(v)
         case Float:
@@ -214,13 +251,12 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
         case None:
             return v
         case:
-            runtime_error(e.pos, "Invalid expression")
+            runtime_error(e.pos, "Invalid expression: %w", e.variant, loc = loc)
     }
     return result
 }
 
 execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
-
     switch id.text {
         case "print":
             args_evaled := make([]Value, len(args), context.temp_allocator)
@@ -278,7 +314,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
             expected_type := type_from_string(func.return_type)
             actual_type := value_type(return_val)
 
-            if !is_legal_cast(actual_type, expected_type) {
+            if actual_type != expected_type {
                 runtime_error(
                     id.pos,
                     "Invalid return type: %v, expected %v",
@@ -288,18 +324,6 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
             return return_val
     }
 }
-
-is_legal_cast :: #force_inline proc(from: Type, to: Type) -> (legal: bool) {
-    if from == to do return true
-    #partial switch from {
-        case .Int:
-            #partial switch to {
-                case .Float, .Bool: legal = true
-            }
-    }
-    return
-}
-
 apply_unary_op :: #force_inline proc(op: UnaryOp, v: Value) -> (val: Value, ok: bool) {
     ok = true
     switch op {
@@ -381,7 +405,7 @@ apply_bool_op :: proc(op: BinaryOp, a, b: Bool) -> (val: Value, ok: bool) {
     return
 }
 
-apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: bool) {
+apply_op :: proc(op: BinaryOp, v1, v2: Value, loc := #caller_location) -> (val: Value, ok: bool) {
     #partial switch &left in v1 {
         case Int:
             right, right_ok := v2.(Int)
@@ -406,6 +430,7 @@ apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value) -> (val: Value, ok: 
             if !right_ok do return
             return apply_bool_op(op, left, right)
     }
+    runtime_error({}, "Can't apply op: %v %v %v", v1, op, v2, loc = loc)
 
     return
 }
@@ -422,19 +447,8 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Va
                 switch declr_stmt in s.variant {
                     case VarDeclrStmt:
                         rhs := eval(declr_stmt.value, &frame)
-                        declared_type := type_from_string(declr_stmt.type)
-                        value_type    := value_type(rhs)
-                        type := declared_type
-                        if declared_type == .None {
-                            type = value_type
-                        } else if !is_legal_cast(value_type, declared_type) {
-                            runtime_error(
-                                declr_stmt.value.pos,
-                                "Cannot assign value of type \"%v\" to %v: %v",
-                                declared_type, s.id.text, value_type
-                            )
-                        }
-                        var := Var{type, rhs, declr_stmt.const}
+                        value_type := value_type(rhs)
+                        var := Var{value_type, rhs, declr_stmt.const}
                         scope_add(&frame, s.id.sym, var)
                     case FnDeclrStmt:
                         if block_type != .Global do runtime_error(
@@ -457,31 +471,53 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Va
                     s.id.text
                 )
                 rhs := eval(s.value, &frame)
-                if s.op == .Assign {
-                    if !is_legal_cast(value_type(rhs), assignee.type) do runtime_error(
-                        s.id.pos,
-                        "Cannot assign value of type %v to %v: %v",
-                        value_type(rhs), s.id.text, assignee.type
-                    )
-                } else {
-                    op, ok := binary_op_from_assign_op(s.op)
+
+                if s.deref {
+                    ref, ok := assignee.value.(^Value)
                     if !ok do runtime_error(
                         s.id.pos,
-                        "Invalid compound assignment operator %w",
+                        "Cannot assign through non-reference %w",
                         s.id.text
                     )
-                    
-                    rhs, ok = apply_op(op, assignee.value, rhs)
-                    if !ok do runtime_error(
-                        s.id.pos,
-                        "Cannot assign value of type %v to %v: %v",
-                        value_type(rhs), s.id.text, assignee.type
-                        
-                    )
-                }
 
-                assignee.type = value_type(rhs)
-                assignee.value = rhs
+                    target := ref^
+                    if s.op != .Assign {
+                        op, ok := binary_op_from_assign_op(s.op)
+                        if !ok do runtime_error(
+                            s.id.pos,
+                            "Invalid compound assignment operator %w",
+                            s.id.text
+                        )
+
+                        rhs, ok = apply_op(op, target, rhs)
+                        if !ok do runtime_error(
+                            s.id.pos,
+                            "Cannot apply compound assignment through %w",
+                            s.id.text
+                        )
+                    }
+
+                    ref^ = rhs
+                } else {
+                    if s.op != .Assign {
+                        op, ok := binary_op_from_assign_op(s.op)
+                        if !ok do runtime_error(
+                            s.id.pos,
+                            "Invalid compound assignment operator %w",
+                            s.id.text
+                        )
+
+                        rhs, ok = apply_op(op, assignee.value, rhs)
+                        if !ok do runtime_error(
+                            s.id.pos,
+                            "Cannot apply compound assignment to %w",
+                            s.id.text
+                        )
+                    }
+
+                    assignee.type = value_type(rhs)
+                    assignee.value = rhs
+                }
             case CallStmt:
                 return_value = execute_call(s.id, s.args, &frame)
             case IfStmt:

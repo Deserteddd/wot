@@ -5,6 +5,7 @@ import "core:strings"
 import "core:bufio"
 import "core:os"
 import "core:strconv"
+import "base:runtime"
 
 @(private = "file")
 Frame :: struct {
@@ -24,7 +25,7 @@ VM :: struct {
     builtin_print: SymbolId,
     builtin_println: SymbolId,
     writer: bufio.Writer,
-    flush: bool
+    flush: bool,
 }
 
 @(private = "file")
@@ -32,7 +33,7 @@ vm: VM
 
 
 @(private = "file")
-vm_pop :: #force_inline proc() -> Value {
+vm_pop :: #force_inline proc() -> Value #no_bounds_check {
     return pop(&vm.stack) 
 }
 
@@ -55,7 +56,7 @@ call_builtin :: proc(sym: SymbolId, argc: int) -> (handled: bool) {
         #partial switch a in arg {
             case Float: bufio.writer_write_rune(&vm.writer, rune(a))
             case Int:   
-                buf: [16]byte
+                buf: [32]byte
                 strconv.write_int(buf[:], i64(a), 10)
                 bufio.writer_write(&vm.writer, buf[:])
             case Bool:  bufio.writer_write_string(&vm.writer, a ? "true" : "false")
@@ -80,19 +81,16 @@ call_function :: proc(sym: SymbolId, argc: int) #no_bounds_check {
 
     locals := make([]Value, len(fn.body.locals), context.allocator)
     for i := argc - 1; i >= 0; i -= 1 {
-        if i < len(locals) {
-            locals[i] = vm_pop()
-        } else {
-            _ = vm_pop()
-        }
+        locals[i] = vm_pop()
     }
 
-    append(&vm.frames, Frame {
+    frame := Frame {
         chunk = &vm.functions[int(fn_idx)].body,
         pc = 0,
         stack_base = len(vm.stack),
-        locals = locals,
-    })
+        locals = locals
+    }
+    append(&vm.frames, frame)
 }
 
 @(private = "file")
@@ -185,7 +183,7 @@ fmt_ir :: proc(ir: ProgramIR) -> string {
     return strings.to_string(b)
 }
 
-execute :: proc() -> (halt: bool) #no_bounds_check {
+execute :: proc() -> (halt: bool) #no_bounds_check #no_type_assert {
     if len(vm.frames) == 0 do return true
 
     frame := current_frame()
@@ -234,7 +232,8 @@ execute :: proc() -> (halt: bool) #no_bounds_check {
             }
 
             resize(&vm.stack, frame.stack_base)
-            _ = pop(&vm.frames)
+            old_frame := pop(&vm.frames)
+            delete(old_frame.locals)
             if len(vm.frames) == 0 {
                 halt = true
             } else {
@@ -245,8 +244,7 @@ execute :: proc() -> (halt: bool) #no_bounds_check {
             lhs := vm_pop()
             rhs := vm_pop()
             op := binary_op_from_opcode(ins.opcode)
-            res, ok := apply_op(op, rhs, lhs)
-            _ = ok
+            res, _ := apply_op(op, rhs, lhs)
             vm_push(res)
         case .And:
             lhs := vm_pop()
@@ -292,6 +290,12 @@ run_ir :: proc(ir: ^ProgramIR) #no_bounds_check {
     vm.functions = ir.functions[:]
     vm.function_idx = ir.function_idx
 
+    for function in ir.functions {
+        fmt.println("function:", function.name)
+        for local in function.body.locals {
+            fmt.println(local)
+        }
+    }
     append(&vm.frames, Frame {
         chunk = &ir.entry,
         pc = 0,

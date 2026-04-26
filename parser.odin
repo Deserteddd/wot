@@ -49,7 +49,8 @@ ParamInfo :: struct {
 AssignStmt :: struct {
     op: AssignOp,
     id: Token,
-    value: Expr
+    value: Expr,
+    deref: bool
 }
 
 AssignOp :: enum {
@@ -97,10 +98,22 @@ Expr :: struct {
         Bool,
         Char,
         Identifier,
+        RefExpr,
+        DerefExpr,
         ^CallExpr,
         ^BinaryExpr,
         ^UnaryExpr,
     }
+}
+
+
+DerefExpr :: struct {
+    id: SymbolId,
+    expr: ^Expr,
+}
+RefExpr :: struct {
+    id: SymbolId,
+    expr: ^Expr,
 }
 
 CallExpr :: struct {
@@ -165,25 +178,6 @@ advance :: proc(p: ^Parser) {
     p.current = scan_token(p.lexer)
 }
 
-parse_program :: proc(p: ^Parser) -> BlockStmt {
-    stmts: [dynamic]Stmt
-
-    for p.current.kind != .EOF {
-        stmt := parse_statement(p)
-        if stmt == nil {
-            fmt.eprintfln("Failed to parse file %w", p.lexer.path)
-            os.exit(1)
-        }
-        // println_statement(stmt)
-        append(&stmts, stmt)
-        skip_stmt_separator(p)
-        if p.current.kind == .CloseBrace do break
-            
-    }
-
-    return BlockStmt(stmts[:])
-}
-
 parse_error :: proc{parse_error_std, parse_error_custom}
 
 parse_error_std :: proc(p: ^Parser, msg: string, loc := #caller_location) {
@@ -194,7 +188,7 @@ parse_error_std :: proc(p: ^Parser, msg: string, loc := #caller_location) {
 	fmt.printf("Parse error at %s(%d:%d): ", pos.file, pos.line, pos.column)
 	fmt.eprint(msg)
     if p.current.text != "" {
-        fmt.eprintf(" %w", p.current.text)
+        fmt.eprintf(" %w (%v)", p.current.text, p.current.kind)
     }
 	fmt.eprintf("\n")
 }
@@ -315,6 +309,16 @@ parse_identifier_stmt :: proc(p: ^Parser) -> Stmt {
         stmt = parse_declaration(p, id)
     case .Eq, .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
         stmt = parse_assignment(p, id)
+    case .Asterisk:
+        advance(p)
+        #partial switch p.current.kind {
+        case .Eq, .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
+            stmt = parse_assignment(p, id)
+        case: parse_error(p, "Unexptected token")
+        }
+        assig_stmt, _ := &stmt.(AssignStmt)
+        assig_stmt.deref = true
+
     case:
         parse_error(p, "Invalid token:")
     }
@@ -681,7 +685,7 @@ parse_additive :: proc(p: ^Parser) -> Expr {
 
 parse_multiplicative :: proc(p: ^Parser) -> Expr {
     left := parse_unary(p)
-    for p.current.kind == .Mul || p.current.kind == .Div || p.current.kind == .Mod {
+    for p.current.kind == .Asterisk || p.current.kind == .Div || p.current.kind == .Mod {
         op_token := p.current
         advance(p)
 
@@ -701,12 +705,26 @@ parse_multiplicative :: proc(p: ^Parser) -> Expr {
 
 parse_unary :: proc(p: ^Parser) -> Expr {
     if p.current.kind == .Sub ||   // -x
-       p.current.kind == .Not {   // !x
+       p.current.kind == .Not ||   // !x
+       p.current.kind == .Ampersand// &x
+    { 
 
         op_token := p.current
         advance(p)
 
         operand := parse_unary(p) // recursion = right associative
+
+        if op_token.kind == .Ampersand {
+            operand_ptr := new(Expr)
+            operand_ptr^ = operand
+            return Expr {operand.id, op_token.pos, RefExpr{id = operand.id, expr = operand_ptr}}
+        }
+
+        if op_token.kind == .Asterisk {
+            operand_ptr := new(Expr)
+            operand_ptr^ = operand
+            return Expr {operand.id, op_token.pos, DerefExpr{id = operand.id, expr = operand_ptr}}
+        }
 
         node := new(UnaryExpr)
         node^ = UnaryExpr{
@@ -716,26 +734,45 @@ parse_unary :: proc(p: ^Parser) -> Expr {
         return Expr {op_token.sym, op_token.pos, node}
     }
 
-    return parse_call_expr(p)
+    return parse_postfix(p)
 }
 
-parse_call_expr :: proc(p: ^Parser, loc := #caller_location) -> Expr {
+parse_postfix :: proc(p: ^Parser, loc := #caller_location) -> Expr {
     expr := parse_factor(p)
 
-    for p.current.kind == .OpenParen {
-        args, ok := parse_call_args(p, expr.id)
-        if !ok do return {}
+    for {
+        #partial switch p.current.kind {
+        case .OpenParen:
+            args, ok := parse_call_args(p, expr.id)
+            if !ok do return {}
 
-        node := new(CallExpr)
-        node^ = CallExpr {
-            callee = expr,
-            args = args,
+            node := new(CallExpr)
+            node^ = CallExpr {
+                callee = expr,
+                args = args,
+            }
+            expr = Expr{expr.id, expr.pos, node}
+
+        case .Asterisk:
+            next := peek_token(p.lexer^)
+            if next.kind == .Int || next.kind == .Float || next.kind == .True || next.kind == .False ||
+               next.kind == .Id || next.kind == .Char || next.kind == .OpenParen || next.kind == .Ampersand ||
+               next.kind == .Sub || next.kind == .Not {
+                return expr
+            }
+
+            advance(p) // consume postfix '*'
+            operand_ptr := new(Expr)
+            operand_ptr^ = expr
+            expr = Expr{expr.id, expr.pos, DerefExpr{id = expr.id, expr = operand_ptr}}
+
+        case: return expr
         }
-        expr = Expr{expr.id, expr.pos, node}
     }
 
     return expr
 }
+
 
 parse_factor :: proc(p: ^Parser) -> Expr {
     token := p.current
@@ -769,13 +806,12 @@ parse_factor :: proc(p: ^Parser) -> Expr {
 
     case .OpenParen:
         advance(p) // consume '('
-
         expr := parse_expression(p)
 
         if p.current.kind != .CloseParen {
+            parse_error(p, "Expected '('', got:")
             panic("expected ')'")
         }
-
         advance(p)
         return expr
 
@@ -856,11 +892,11 @@ op_token_kind :: proc(t: TokenKind) -> BinaryOp {
     #partial switch t {
         case .Add: return .Add
         case .Sub: return .Sub
-        case .Mul: return .Mul
         case .Div: return .Div
         case .Mod: return .Mod
         case .Or:  return .Or
         case .And: return .And
+        case .Asterisk: return .Mul
         case .CmpEq:    return .CmpEq
         case .NotEq:    return .NotEq
         case .Lt:       return .Lt
@@ -912,4 +948,23 @@ to_string_unary_op :: proc(op: UnaryOp) -> string {
 
     }
     return ""
+}
+
+parse_program :: proc(p: ^Parser) -> BlockStmt {
+    stmts: [dynamic]Stmt
+
+    for p.current.kind != .EOF {
+        stmt := parse_statement(p)
+        if stmt == nil {
+            fmt.eprintfln("Failed to parse file %w", p.lexer.path)
+            os.exit(1)
+        }
+        // fmt.println(stmt)
+        append(&stmts, stmt)
+        skip_stmt_separator(p)
+        if p.current.kind == .CloseBrace do break
+            
+    }
+
+    return BlockStmt(stmts[:])
 }

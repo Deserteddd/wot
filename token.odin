@@ -27,7 +27,7 @@ symbol_intern :: proc(name: string) -> SymbolId {
 symbol_name :: proc(id: SymbolId) -> string {
     i := int(id)
     if i <= 0 || i > len(symbol_names_by_id) {
-        fmt.eprintfln("Symbol id: %v doesn't exist")
+        fmt.eprintfln("Symbol id: %v doesn't exist", id)
         os.exit(1)
     }
     return symbol_names_by_id[i - 1]
@@ -58,6 +58,8 @@ TokenKind :: enum u32 {
     String,
     Fn,
 
+    Ampersand,
+    Asterisk,
     OpenParen,
     CloseParen,
     OpenBracket,
@@ -74,7 +76,6 @@ TokenKind :: enum u32 {
     Not,
     Add,
     Sub,
-    Mul,
     Div,
     Mod,
 
