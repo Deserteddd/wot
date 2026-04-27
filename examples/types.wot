@@ -1,6 +1,7 @@
-a: int
-b := 4.2
+print_int :: fn(a: float) {
+	println(a)
+}
 
-a += b //Should error
+a := 4
 
-println(a)
+print_int(a)

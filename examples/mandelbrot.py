@@ -35,3 +35,4 @@ while y <= 1:
 print(iterations)
 elapsed_ms = (time.perf_counter() - start) * 1000.0
 print(f"{elapsed_ms:.3f} ms")
+

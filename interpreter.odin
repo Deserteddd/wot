@@ -2,8 +2,8 @@ package wot
 
 import "core:fmt"
 import "core:os"
-import "core:strings"
 import "core:unicode/utf8"
+
 
 funcs: map[SymbolId]Func
 
@@ -121,9 +121,9 @@ format_value :: proc(v: Value) -> string {
 print_values :: proc(args: []Value, newline: bool) {
     for value, i in args {
         if i > 0 {
-            fmt.print(" ")
+            fmt.print(" ", flush = false)
         }
-        fmt.print(format_value(value))
+        fmt.print(format_value(value), flush = false)
     }
 
     if newline {
@@ -256,6 +256,7 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
     return result
 }
 
+@(private = "file")
 execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
     switch id.text {
         case "print":
@@ -275,7 +276,6 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
             return {}
 
         case:
-            // fmt.printfln("seaching function %v, from %v", id.text, funcs)
             func, func_found := funcs[id.sym]
             if !func_found do runtime_error(
                 id.pos,
@@ -435,6 +435,7 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value, loc := #caller_location) -> (val: 
     return
 }
 
+@(private = "file")
 run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Value {
     frame := scope_push(scope, block_type)
     defer scope_pop(&frame)
@@ -545,13 +546,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Va
 }
 
 run_ast :: proc(program: BlockStmt) -> Value {
-    for stmt in program {
-        if declr, declr_ok := stmt.(DeclrStmt); declr_ok {
-            if fn_declr, fn_declr_ok := declr.variant.(FnDeclrStmt); fn_declr_ok {
-                funcs[declr.id.sym] = Func(fn_declr)
-            }
-        }
-    }
+
     run_block(program, nil, .Global)
     return {}
 }

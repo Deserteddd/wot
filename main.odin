@@ -51,24 +51,24 @@ build_run :: proc(source: string, vm, dump: bool) {
     free_all(context.temp_allocator)
     print_compiler_stage_time(&start, "Compiled")
 
-    // if vm {
-    //     if dump {
-    //         dump_name := fmt.tprintf("%s_dump.txt", filepath.stem(os.args[1]))
-    //         dump_path := fmt.tprintf("%s%c%s", filepath.dir(os.args[1]), filepath.SEPARATOR, dump_name)
-    //         dump_err := os.write_entire_file_from_string(dump_path, fmt_ir(ir))
-    //         if dump_err != nil {
-    //             fmt.eprintfln("Failed to write IR dump to %v: %v", dump_path, dump_err)
-    //             return
-    //         }
-    //         fmt.printfln("Wrote IR dump to: %v", dump_path)
-    //         print_compiler_stage_time(&start, "Created dump")
-    //     }
-    //     run_ir(&ir)
-    //     print_compiler_stage_time(&start, "VM ran")
-    // } else {
-    //     run_ast(program)
-    //     print_compiler_stage_time(&start, "Ast ran")
-    // }
+    if vm {
+        if dump {
+            dump_name := fmt.tprintf("%s_dump.txt", filepath.stem(os.args[1]))
+            dump_path := fmt.tprintf("%s%c%s", filepath.dir(os.args[1]), filepath.SEPARATOR, dump_name)
+            dump_err := os.write_entire_file_from_string(dump_path, fmt_ir(ir))
+            if dump_err != nil {
+                fmt.eprintfln("Failed to write IR dump to %v: %v", dump_path, dump_err)
+                return
+            }
+            fmt.printfln("Wrote IR dump to: %v", dump_path)
+            print_compiler_stage_time(&start, "Created dump")
+        }
+        run_ir(&ir)
+        print_compiler_stage_time(&start, "VM ran")
+    } else {
+        run_ast(program)
+        print_compiler_stage_time(&start, "Ast ran")
+    }
 }
 
 print_compiler_stage_time :: proc(start: ^time.Time, stage: string) {
