@@ -1,0 +1,6 @@
+a: int
+b := 4.2
+
+a += b //Should error
+
+println(a)
