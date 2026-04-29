@@ -8,16 +8,13 @@ import vmem "core:mem/virtual"
 import "base:runtime"
 import "core:slice"
 
-
 main :: proc() {
-
     arena: vmem.Arena
     err := vmem.arena_init_growing(&arena)
     assert(err == .None)
     arena_allocator := vmem.arena_allocator(&arena)
     defer vmem.arena_destroy(&arena)
     context.allocator = arena_allocator
-
 
     if len(os.args) < 2 {
         fmt.eprintln("Missing input file")

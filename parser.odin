@@ -31,7 +31,7 @@ DeclrStmt :: struct {
 
 VarDeclrStmt :: struct {
     const: bool,
-    type: string,
+    type: Type,
     value: Expr
 }
 
@@ -340,6 +340,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
             if value.variant == nil do return nil
             stmt.variant = VarDeclrStmt {
                 const = false,
+                type  = .None,
                 value = value
             }
             return stmt
@@ -355,11 +356,20 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = true,
-                        value = value
+                        value = value,
+                        type = .None
                     }
             }
         case .Id:
-            type := p.current
+            type_token := p.current
+            type := type_from_string(p.current.text)
+            // Note: This will not work for user declared types
+            if type == .Invalid do parse_error(
+                p.current.pos,
+                "Invalid type declaration: %w",
+                p.current.text
+            )
+            
             advance(p)
             #partial switch p.current.kind {
                 case .Eq:
@@ -368,7 +378,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = false,
-                        type = type.text,
+                        type = type,
                         value = value
                     }
                 case .Colon:
@@ -377,21 +387,22 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
                         const = true,
-                        type = type.text,
+                        type = type,
                         value = value
                     }
                 case .Newline:
                     expr: Expr
-                    #partial switch type_from_string(type.text) {
+                    #partial switch type {
                         case .Bool:  expr.variant = Bool(false)
                         case .Int:   expr.variant = Int(0)
                         case .Float: expr.variant = Float(0)
+                        case .Char:  expr.variant = Char(0)
                         case:
-                            parse_error_custom(type.pos, "Undeclared type: %v", type.text)
+                            parse_error_custom(type_token.pos, "!Undeclared type: %v", type_token.text)
                     }
                     stmt.variant = VarDeclrStmt {
                         const = false,
-                        type = type.text,
+                        type = type,
                         value = expr
                     }
                 case:
@@ -795,7 +806,7 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         return Expr{token.sym, token.pos, node}
 
     case .Id:
-        node := Identifier(p.current.text)
+        node := Identifier(p.current.sym)
         advance(p)
         return Expr{token.sym, token.pos, node}
 
@@ -865,7 +876,7 @@ println_statement :: proc(s: Stmt) {
                 case VarDeclrStmt:
                     fmt.printf("Var:\t%vid: %w\t, typename: %w,\t value: %v ", 
                         d.const                ? "const\t" : "\t", stmt.id.text, 
-                        d.type == ""           ? "None"    : d.type, 
+                        d.type == .None        ? "None"    : fmt.tprint(d.type), 
                         d.value.variant
                     )
                 case FnDeclrStmt:
@@ -884,7 +895,8 @@ type_from_string :: #force_inline proc(typename: string) -> Type {
         case "float":   return .Float
         case "bool":    return .Bool
         case "char":    return .Char
-        case:           return .None 
+        case "":        return .None 
+        case:           return .Invalid
     }
 }
 

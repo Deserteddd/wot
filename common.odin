@@ -6,4 +6,4 @@ Int     :: distinct i64
 Float   :: distinct f64
 Bool    :: distinct bool
 Char    :: distinct byte
-Identifier :: distinct string
+Identifier :: SymbolId

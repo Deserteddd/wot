@@ -3,6 +3,7 @@ package wot
 import "core:fmt"
 import "core:os"
 import "core:unicode/utf8"
+import "core:reflect"
 
 
 funcs: map[SymbolId]Func
@@ -16,6 +17,7 @@ Var :: struct {
 }
 
 Type :: enum {
+    Invalid,
     None,
     Float,
     Int,
@@ -39,13 +41,15 @@ Scope_Kind :: enum {
     Block,
 }
 
-Scope :: struct {
-    symbols: map[SymbolId]Var,
-    parent: ^Scope,
+
+Scope :: struct($T: typeid) {
+    symbols: map[SymbolId]T,
+    parent: ^Scope(T),
     kind: Scope_Kind,
 }
 
-scope_push :: proc(parent: ^Scope, kind: Scope_Kind) -> Scope {
+
+scope_push :: proc(parent: ^Scope($T), kind: Scope_Kind) -> Scope(T) {
     if kind == .Global && parent != nil {
         panic("Global scope cannot have a parent")
     }
@@ -53,14 +57,14 @@ scope_push :: proc(parent: ^Scope, kind: Scope_Kind) -> Scope {
         panic("Non-global scope requires a parent")
     }
 
-    return Scope {
-        symbols = make_map(map[SymbolId]Var),
+    return Scope(T) {
+        symbols = make_map(map[SymbolId]T),
         parent = parent,
         kind = kind,
     }
 }
 
-scope_pop :: proc(scope: ^Scope) {
+scope_pop :: proc(scope: ^Scope($T)) {
     if scope == nil do return
     if scope.symbols != nil {
         delete(scope.symbols)
@@ -69,7 +73,7 @@ scope_pop :: proc(scope: ^Scope) {
 }
 
 
-scope_fetch :: proc(scope: ^Scope, id: SymbolId) -> ^Var {
+scope_fetch :: proc(scope: ^Scope($T), id: SymbolId) -> ^T {
     if scope == nil do return nil
 
     s := scope
@@ -85,7 +89,7 @@ scope_fetch :: proc(scope: ^Scope, id: SymbolId) -> ^Var {
     for s != nil {
         if s.kind == .Global {
             var, found := &s.symbols[id]
-            if found && var.const do return var
+            if found && var^.const do return var
         }
         s = s.parent
     }
@@ -93,13 +97,14 @@ scope_fetch :: proc(scope: ^Scope, id: SymbolId) -> ^Var {
     return nil
 }
 
-scope_add :: proc(scope: ^Scope, id: SymbolId, v: Var) -> (overwrote: bool) {
-    val, found := &scope.symbols[id]
-    overwrote = found
-    if overwrote do val^ = v
-    else do scope.symbols[id] = v
-
-    return
+scope_add :: proc(scope: ^Scope($T), id: SymbolId, value: T) -> bool {
+    existing := scope_fetch(scope, id)
+    if existing != nil {
+        existing^ = value
+        return true
+    }
+    scope.symbols[id] = value
+    return false
 }
 
 
@@ -168,7 +173,7 @@ runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_locatio
     os.exit(1)
 }
 
-resolve_lvalue_pointer :: proc(e: Expr, scope: ^Scope) -> ^Value {
+resolve_lvalue_pointer :: proc(e: Expr, scope: ^Scope(Var)) -> ^Value {
     #partial switch v in e.variant {
         case Identifier:
             variable := scope_fetch(scope, e.id)
@@ -190,7 +195,7 @@ resolve_lvalue_pointer :: proc(e: Expr, scope: ^Scope) -> ^Value {
     }
 }
 
-eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
+eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
     result: Value
     switch v in e.variant {
         case RefExpr:
@@ -240,7 +245,7 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
                 case Identifier:
                     id_token := Token {
                         kind = .Id,
-                        text = string(callee),
+                        text = symbol_name(callee),
                         sym  = v.callee.id,
                         pos = v.callee.pos,
                     }
@@ -257,7 +262,7 @@ eval :: proc(e: Expr, scope: ^Scope, loc := #caller_location) -> Value {
 }
 
 @(private = "file")
-execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
+execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
     switch id.text {
         case "print":
             args_evaled := make([]Value, len(args), context.temp_allocator)
@@ -273,6 +278,34 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
                 args_evaled[i] = eval(arg, scope)
             }
             print_values(args_evaled, true)
+            return {}
+
+        case "type_of":
+            args_pos := id.pos
+            args_pos.column += utf8.rune_count(id.text)
+            if len(args) != 1 {
+                runtime_error(
+                    args_pos,
+                    "Expected 1 argument, got %v",
+                    len(args)
+                )
+            }
+            #partial switch arg in args[0].variant {
+            case Identifier:
+                val := scope_fetch(scope, arg)
+                if val == nil do runtime_error(
+                    args_pos,
+                    "Undeclared variable: %v",
+                    symbol_name(arg)
+                )
+                val_type := reflect.union_variant_typeid(val.value)
+                for ref_val, ref_ok := val.value.(^Value); ref_ok; ref_val, ref_ok = ref_val.(^Value){
+                    val_type = reflect.union_variant_typeid(ref_val^)
+                    fmt.print("&", flush = false)
+                }
+                fmt.println(val_type)
+            }
+
             return {}
 
         case:
@@ -314,13 +347,11 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope) -> Value {
             expected_type := type_from_string(func.return_type)
             actual_type := value_type(return_val)
 
-            if actual_type != expected_type {
-                runtime_error(
-                    id.pos,
-                    "Invalid return type: %v, expected %v",
-                    value_type(return_val), type_from_string(func.return_type)
-                )
-            }
+            if actual_type != expected_type do runtime_error(
+                id.pos,
+                "Invalid return type: %v, expected %v",
+                value_type(return_val), type_from_string(func.return_type)
+            )
             return return_val
     }
 }
@@ -436,7 +467,7 @@ apply_op :: proc(op: BinaryOp, v1, v2: Value, loc := #caller_location) -> (val: 
 }
 
 @(private = "file")
-run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Value {
+run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) -> Value {
     frame := scope_push(scope, block_type)
     defer scope_pop(&frame)
 
@@ -546,7 +577,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope, block_type: Scope_Kind) -> Va
 }
 
 run_ast :: proc(program: BlockStmt) -> Value {
-
-    run_block(program, nil, .Global)
+    scope: ^Scope(Var) = nil
+    run_block(program, scope, .Global)
     return {}
 }
