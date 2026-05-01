@@ -32,6 +32,7 @@ DeclrStmt :: struct {
 VarDeclrStmt :: struct {
     const: bool,
     type: Type,
+    inferred: bool,
     value: Expr
 }
 

@@ -1,8 +1,6 @@
 a := 4.5
-b := &a
-c := &b
+b: int = 2
 
+while a == false {
 
-type_of(c)
-
-type_of(c**)
+}
