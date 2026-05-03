@@ -293,12 +293,6 @@ run_ir :: proc(ir: ^ProgramIR) #no_bounds_check {
     vm.functions = ir.functions[:]
     vm.function_idx = ir.function_idx
 
-    for function in ir.functions {
-        fmt.println("function:", function.name)
-        for local in function.body.locals {
-            fmt.println(local)
-        }
-    }
     append(&vm.frames, Frame {
         chunk = &ir.entry,
         pc = 0,

@@ -377,7 +377,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     advance(p)
                     value := parse_expression(p)
                     ok := check_expr_type(&value, type)
-                    if !ok do runtime_error(
+                    if !ok do parse_error(
                         p.current.pos, 
                         "Invalid type \"%v\"", 
                         type
@@ -393,10 +393,10 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     advance(p)
                     value := parse_expression(p)
                     ok := check_expr_type(&value, type)
-                    if !ok do runtime_error(
+                    if !ok do parse_error(
                         p.current.pos, 
                         "Invalid type \"%v\"", 
-                        type
+                        type_token.text
                     )
                     if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {

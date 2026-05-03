@@ -281,44 +281,11 @@ promote_inferred_for_binary :: proc(var: ^Var, other_type: Type, pos: Pos) {
 @(private = "file")
 execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
     switch id.text {
-        case "print":
+        case "print", "println":
             args_evaled := make([]Value, len(args), context.temp_allocator)
             for arg, i in args {
                 args_evaled[i] = eval(arg, scope)
             }
-            print_values(args_evaled, false)
-            return {}
-
-        case "println":
-            args_evaled := make([]Value, len(args), context.temp_allocator)
-            for arg, i in args {
-                args_evaled[i] = eval(arg, scope)
-            }
-            print_values(args_evaled, true)
-            return {}
-
-        case "type_of":
-            args_pos := id.pos
-            args_pos.column += utf8.rune_count(id.text)
-            if len(args) != 1 {
-                runtime_error(
-                    args_pos,
-                    "Expected 1 argument, got %v",
-                    len(args)
-                )
-            }
-            #partial switch arg in args[0].variant {
-            case Identifier:
-                val := scope_fetch(scope, arg)
-                if val == nil do runtime_error(
-                    args_pos,
-                    "Undeclared variable: %v",
-                    symbol_name(arg)
-                )
-                val_type := reflect.union_variant_typeid(val.value)
-                fmt.println(val_type)
-            }
-
             return {}
 
         case:
@@ -589,24 +556,25 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
             case IfStmt:
                 cond := eval(s.condition, &frame)
                 if bool_val, bool_val_ok := cond.(Bool); bool_val_ok {
-                    if bool_val {
-                        return_value = run_block(s.main_body, &frame, .Block)
-                    } else {
-                        return_value = run_block(s.else_body, &frame, .Block)
-                    }
+                    // if bool_val {
+                        run_block(s.main_body, &frame, .Block)
+                    // } else {
+                        run_block(s.else_body, &frame, .Block)
+                    // }
                 } else do runtime_error(s.condition.pos, "If-condition must evaluate to bool")
             case WhileStmt:
                 cond := eval(s.condition, &frame)
                 if bool_val, bool_val_ok := cond.(Bool); bool_val_ok {
-                    for bool_val {
+                    // for bool_val {
                         run_block(s.body, &frame, .Block)
-                        bool_val = eval(s.condition, &frame).(Bool)
-                    }
+                        // bool_val = eval(s.condition, &frame).(Bool)
+                    // }
                 } else do runtime_error(s.condition.pos, "While-condition must evaluate to bool")
             case BlockStmt:
                 run_block(s, &frame, .Block)
         }
     }
+
     return return_value
 }
 

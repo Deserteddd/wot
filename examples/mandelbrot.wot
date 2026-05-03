@@ -1,38 +1,38 @@
-y := -1
-iterations := 0
-while y <= 1 {
-	iterations = inner_loop(y, iterations)
+MAX_ITER :: 100
 
+y := -1
+while y <= 1 {
+	outer_loop(y)
 	println()
 	y += 0.05
 }
 
-inner_loop :: fn(y: float, iterations: int) -> int {
-	iterations := iterations
+outer_loop :: fn(y: float) {
 	x := -2
 	while x <= 1 {
-		zx := 0
-		zy := 0
-		iter := 0
-		max_iter := 100
+        iter := inner_loop(x, y)
 
-		while (zx*zx + zy*zy <= 4) && (iter < max_iter) {
-            xtemp := zx*zx - zy*zy + x
-			zy = 2*zx*zy + y
-			zx = xtemp
-			iter += 1
-			iterations += 1
-		}
-
-		if iter == max_iter {
-			print('#')
-		} else {
-			print(' ')
-		}
+        if iter == MAX_ITER {
+            print('#')
+        } else {
+            print(' ')
+        }
 
 		x += 0.0315
 	}
-	return iterations
 }
 
-println("Total iterations:", iterations)
+inner_loop :: fn(x: float, y: float) -> int {
+    zx: float
+    zy: float
+    iter: int
+
+    while (zx*zx + zy*zy <= 4) && (iter < MAX_ITER) {
+        xtemp := zx*zx - zy*zy + x
+        zy = 2*zx*zy + y
+        zx = xtemp
+        iter += 1
+    }
+
+    return iter
+}
