@@ -72,6 +72,7 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
                 token.kind = .EOF
                 token.text = "EOF"
                 return
+
             case '(': token.kind = .OpenParen
             case ')': token.kind = .CloseParen
             case '[': token.kind = .OpenBracket
@@ -88,7 +89,6 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
                     token.kind = .Or
                 }
             case '&':
-                token.kind = .Ampersand
                 if l.ch == '&' {
                     advance_rune(l)
                     token.kind = .And
@@ -123,7 +123,7 @@ scan_token :: proc(l: ^Lexer) -> (token: Token) {
                     token.kind = .SubEq
                 }
             case '*':
-                token.kind = .Asterisk
+                token.kind = .Mul
                 if l.ch == '=' {
                     advance_rune(l)
                     token.kind = .MulEq

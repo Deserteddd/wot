@@ -41,9 +41,7 @@ build_run :: proc(source: string, vm, dump: bool) {
     parser: Parser
     init_parser(&lexer, &parser)
     program := parse_program(&parser)
-    check_ast(program)
-    ir: ProgramIR
-    if vm do ir = generate_program_ir(program)
+    ir := generate_program_ir(program)
 
     free_all(context.temp_allocator)
     print_compiler_stage_time(&start, "Compiled")

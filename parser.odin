@@ -3,8 +3,6 @@ package wot
 import "core:fmt"
 import "core:strconv"
 import "core:os"
-import "core:strings"
-
 
 Parser :: struct {
     lexer: ^Lexer,
@@ -30,10 +28,10 @@ DeclrStmt :: struct {
 }
 
 VarDeclrStmt :: struct {
+    type:  Type,
+    value: Expr,
     const: bool,
-    type: Type,
-    inferred: bool,
-    value: Expr
+    inferred: bool
 }
 
 FnDeclrStmt :: struct {
@@ -50,8 +48,7 @@ ParamInfo :: struct {
 AssignStmt :: struct {
     op: AssignOp,
     id: Token,
-    value: Expr,
-    deref: bool
+    value: Expr
 }
 
 AssignOp :: enum {
@@ -98,24 +95,22 @@ Expr :: struct {
         Float,
         Bool,
         Char,
+        String,
         Identifier,
-        RefExpr,
-        DerefExpr,
         ^CallExpr,
         ^BinaryExpr,
         ^UnaryExpr,
     }
 }
 
+None :: struct {}
 
-DerefExpr :: struct {
-    id: SymbolId,
-    expr: ^Expr,
-}
-RefExpr :: struct {
-    id: SymbolId,
-    expr: ^Expr,
-}
+Int     :: distinct i64
+Float   :: distinct f64
+Bool    :: distinct bool
+Char    :: distinct byte
+String  :: distinct string
+Identifier :: SymbolId
 
 CallExpr :: struct {
     callee: Expr,
@@ -179,6 +174,25 @@ advance :: proc(p: ^Parser) {
     p.current = scan_token(p.lexer)
 }
 
+parse_program :: proc(p: ^Parser) -> BlockStmt {
+    stmts: [dynamic]Stmt
+
+    for p.current.kind != .EOF {
+        stmt := parse_statement(p)
+        if stmt == nil {
+            fmt.eprintfln("Failed to parse file %w", p.lexer.path)
+            os.exit(1)
+        }
+        // println_statement(stmt)
+        append(&stmts, stmt)
+        skip_stmt_separator(p)
+        if p.current.kind == .CloseBrace do break
+            
+    }
+
+    return BlockStmt(stmts[:])
+}
+
 parse_error :: proc{parse_error_std, parse_error_custom}
 
 parse_error_std :: proc(p: ^Parser, msg: string, loc := #caller_location) {
@@ -189,7 +203,7 @@ parse_error_std :: proc(p: ^Parser, msg: string, loc := #caller_location) {
 	fmt.printf("Parse error at %s(%d:%d): ", pos.file, pos.line, pos.column)
 	fmt.eprint(msg)
     if p.current.text != "" {
-        fmt.eprintf(" %w (%v)", p.current.text, p.current.kind)
+        fmt.eprintf(" %w", p.current.text)
     }
 	fmt.eprintf("\n")
 }
@@ -310,16 +324,6 @@ parse_identifier_stmt :: proc(p: ^Parser) -> Stmt {
         stmt = parse_declaration(p, id)
     case .Eq, .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
         stmt = parse_assignment(p, id)
-    case .Asterisk:
-        advance(p)
-        #partial switch p.current.kind {
-        case .Eq, .AddEq, .SubEq, .MulEq, .DivEq, .ModEq:
-            stmt = parse_assignment(p, id)
-        case: parse_error(p, "Unexptected token")
-        }
-        assig_stmt, _ := &stmt.(AssignStmt)
-        assig_stmt.deref = true
-
     case:
         parse_error(p, "Invalid token:")
     }
@@ -340,9 +344,10 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
             value := parse_expression(p)
             if value.variant == nil do return nil
             stmt.variant = VarDeclrStmt {
-                const = false,
                 type  = .None,
-                value = value
+                value = value,
+                const = false,
+                inferred = true
             }
             return stmt
         case .Colon:
@@ -356,40 +361,49 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                     value := parse_expression(p)
                     if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
-                        const = true,
+                        type  = .None,
                         value = value,
-                        type = .None
+                        const = true,
+                        inferred = true
                     }
             }
         case .Id:
             type_token := p.current
             type := type_from_string(p.current.text)
-            // Note: This will not work for user declared types
-            if type == .Invalid do parse_error(
-                p.current.pos,
-                "Invalid type declaration: %w",
-                p.current.text
-            )
-            
+            if type == .Invalid do parse_error(p, "Invalid type:")
             advance(p)
             #partial switch p.current.kind {
                 case .Eq:
                     advance(p)
                     value := parse_expression(p)
+                    ok := check_expr_type(&value, type)
+                    if !ok do runtime_error(
+                        p.current.pos, 
+                        "Invalid type \"%v\"", 
+                        type
+                    )
                     if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
-                        const = false,
                         type = type,
-                        value = value
+                        value = value,
+                        const = false,
+                        inferred = false
                     }
                 case .Colon:
                     advance(p)
                     value := parse_expression(p)
+                    ok := check_expr_type(&value, type)
+                    if !ok do runtime_error(
+                        p.current.pos, 
+                        "Invalid type \"%v\"", 
+                        type
+                    )
                     if value.variant == nil do return nil
                     stmt.variant = VarDeclrStmt {
-                        const = true,
                         type = type,
-                        value = value
+                        value = value,
+                        const = true,
+                        inferred = false
                     }
                 case .Newline:
                     expr: Expr
@@ -397,14 +411,14 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                         case .Bool:  expr.variant = Bool(false)
                         case .Int:   expr.variant = Int(0)
                         case .Float: expr.variant = Float(0)
-                        case .Char:  expr.variant = Char(0)
                         case:
-                            parse_error_custom(type_token.pos, "!Undeclared type: %v", type_token.text)
+                            parse_error_custom(type_token.pos, "Undeclared type: %v", type_token.text)
                     }
                     stmt.variant = VarDeclrStmt {
+                        type = type_from_string(type_token.text),
+                        value = expr,
                         const = false,
-                        type = type,
-                        value = expr
+                        inferred = false
                     }
                 case:
                     parse_error(p, "Unexpected token:")
@@ -416,6 +430,27 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
             parse_error(p, "Unexpected token:")
     }
     return stmt
+}
+
+check_expr_type :: proc(expr: ^Expr, type: Type) -> bool {
+    #partial switch e in expr.variant {
+        case Int:
+            if type == .Float {
+                expr.variant = Float(e)
+                return true
+            }
+            if type == .Int   do return true
+        case Float:
+            if type == .Float do return true
+        case Bool:
+            if type == .Bool  do return true
+        case Char:
+            if type == .Char  do return true
+        case None: return true
+        case Identifier, ^CallExpr, ^BinaryExpr, ^UnaryExpr:
+            return true
+    }
+    return false
 }
 
 parse_fn :: proc(p: ^Parser, id: Token) -> (FnDeclrStmt, bool) {
@@ -697,7 +732,7 @@ parse_additive :: proc(p: ^Parser) -> Expr {
 
 parse_multiplicative :: proc(p: ^Parser) -> Expr {
     left := parse_unary(p)
-    for p.current.kind == .Asterisk || p.current.kind == .Div || p.current.kind == .Mod {
+    for p.current.kind == .Mul || p.current.kind == .Div || p.current.kind == .Mod {
         op_token := p.current
         advance(p)
 
@@ -717,26 +752,12 @@ parse_multiplicative :: proc(p: ^Parser) -> Expr {
 
 parse_unary :: proc(p: ^Parser) -> Expr {
     if p.current.kind == .Sub ||   // -x
-       p.current.kind == .Not ||   // !x
-       p.current.kind == .Ampersand// &x
-    { 
+       p.current.kind == .Not {   // !x
 
         op_token := p.current
         advance(p)
 
         operand := parse_unary(p) // recursion = right associative
-
-        if op_token.kind == .Ampersand {
-            operand_ptr := new(Expr)
-            operand_ptr^ = operand
-            return Expr {operand.id, op_token.pos, RefExpr{id = operand.id, expr = operand_ptr}}
-        }
-
-        if op_token.kind == .Asterisk {
-            operand_ptr := new(Expr)
-            operand_ptr^ = operand
-            return Expr {operand.id, op_token.pos, DerefExpr{id = operand.id, expr = operand_ptr}}
-        }
 
         node := new(UnaryExpr)
         node^ = UnaryExpr{
@@ -746,45 +767,26 @@ parse_unary :: proc(p: ^Parser) -> Expr {
         return Expr {op_token.sym, op_token.pos, node}
     }
 
-    return parse_postfix(p)
+    return parse_call_expr(p)
 }
 
-parse_postfix :: proc(p: ^Parser, loc := #caller_location) -> Expr {
+parse_call_expr :: proc(p: ^Parser, loc := #caller_location) -> Expr {
     expr := parse_factor(p)
 
-    for {
-        #partial switch p.current.kind {
-        case .OpenParen:
-            args, ok := parse_call_args(p, expr.id)
-            if !ok do return {}
+    for p.current.kind == .OpenParen {
+        args, ok := parse_call_args(p, expr.id)
+        if !ok do return {}
 
-            node := new(CallExpr)
-            node^ = CallExpr {
-                callee = expr,
-                args = args,
-            }
-            expr = Expr{expr.id, expr.pos, node}
-
-        case .Asterisk:
-            next := peek_token(p.lexer^)
-            if next.kind == .Int || next.kind == .Float || next.kind == .True || next.kind == .False ||
-               next.kind == .Id || next.kind == .Char || next.kind == .OpenParen || next.kind == .Ampersand ||
-               next.kind == .Sub || next.kind == .Not {
-                return expr
-            }
-
-            advance(p) // consume postfix '*'
-            operand_ptr := new(Expr)
-            operand_ptr^ = expr
-            expr = Expr{expr.id, expr.pos, DerefExpr{id = expr.id, expr = operand_ptr}}
-
-        case: return expr
+        node := new(CallExpr)
+        node^ = CallExpr {
+            callee = expr,
+            args = args,
         }
+        expr = Expr{expr.id, expr.pos, node}
     }
 
     return expr
 }
-
 
 parse_factor :: proc(p: ^Parser) -> Expr {
     token := p.current
@@ -815,15 +817,21 @@ parse_factor :: proc(p: ^Parser) -> Expr {
         node := Char(p.current.text[0])
         advance(p)
         return Expr{token.sym, token.pos, node}
+    
+    case .String:
+        node := String(p.current.text)
+        advance(p)
+        return Expr{token.sym, token.pos, node}
 
     case .OpenParen:
         advance(p) // consume '('
+
         expr := parse_expression(p)
 
         if p.current.kind != .CloseParen {
-            parse_error(p, "Expected '('', got:")
             panic("expected ')'")
         }
+
         advance(p)
         return expr
 
@@ -873,16 +881,7 @@ println_statement :: proc(s: Stmt) {
             fmt.print("RETURN ")
             print_expression(auto_cast stmt)
         case DeclrStmt:
-            switch d in stmt.variant {
-                case VarDeclrStmt:
-                    fmt.printf("Var:\t%vid: %w\t, typename: %w,\t value: %v ", 
-                        d.const                ? "const\t" : "\t", stmt.id.text, 
-                        d.type == .None        ? "None"    : fmt.tprint(d.type), 
-                        d.value.variant
-                    )
-                case FnDeclrStmt:
-                    fmt.printf("Fn:\t%v", d)
-            }
+            fmt.print(stmt)
         case CallStmt:
             fmt.printf("Called %w with args: ", stmt.id.text)
             for arg in stmt.args do print_expression(arg)
@@ -896,7 +895,8 @@ type_from_string :: #force_inline proc(typename: string) -> Type {
         case "float":   return .Float
         case "bool":    return .Bool
         case "char":    return .Char
-        case "":        return .None 
+        case "string":  return .String
+        case "":        return .None
         case:           return .Invalid
     }
 }
@@ -905,11 +905,11 @@ op_token_kind :: proc(t: TokenKind) -> BinaryOp {
     #partial switch t {
         case .Add: return .Add
         case .Sub: return .Sub
+        case .Mul: return .Mul
         case .Div: return .Div
         case .Mod: return .Mod
         case .Or:  return .Or
         case .And: return .And
-        case .Asterisk: return .Mul
         case .CmpEq:    return .CmpEq
         case .NotEq:    return .NotEq
         case .Lt:       return .Lt
@@ -961,23 +961,4 @@ to_string_unary_op :: proc(op: UnaryOp) -> string {
 
     }
     return ""
-}
-
-parse_program :: proc(p: ^Parser) -> BlockStmt {
-    stmts: [dynamic]Stmt
-
-    for p.current.kind != .EOF {
-        stmt := parse_statement(p)
-        if stmt == nil {
-            fmt.eprintfln("Failed to parse file %w", p.lexer.path)
-            os.exit(1)
-        }
-        // fmt.println(stmt)
-        append(&stmts, stmt)
-        skip_stmt_separator(p)
-        if p.current.kind == .CloseBrace do break
-            
-    }
-
-    return BlockStmt(stmts[:])
 }

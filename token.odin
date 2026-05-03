@@ -36,8 +36,8 @@ symbol_name :: proc(id: SymbolId) -> string {
 
 Token :: struct {
 	kind:   TokenKind,
-    text:   string,
     sym:    SymbolId,
+    text:   string,
     pos:    Pos
 }
 
@@ -59,8 +59,6 @@ TokenKind :: enum u32 {
     String,
     Fn,
 
-    Ampersand,
-    Asterisk,
     OpenParen,
     CloseParen,
     OpenBracket,
@@ -77,6 +75,7 @@ TokenKind :: enum u32 {
     Not,
     Add,
     Sub,
+    Mul,
     Div,
     Mod,
 

@@ -13,7 +13,8 @@ Func :: distinct FnDeclrStmt
 Var :: struct {
     type: Type,
     value: Value,
-    const: bool
+    const: bool,
+    inferred: bool
 }
 
 Type :: enum {
@@ -22,8 +23,8 @@ Type :: enum {
     Float,
     Int,
     Bool,
+    String,
     Char,
-    Reference,
 }
 
 Value :: union #no_nil {
@@ -31,8 +32,8 @@ Value :: union #no_nil {
     Float,
     Int,
     Char,
+    String,
     Bool,
-    ^Value
 }
 
 Scope_Kind :: enum {
@@ -116,8 +117,7 @@ format_value :: proc(v: Value) -> string {
             return fmt.tprint(rune(value))
         case Bool:
             return fmt.tprintf("%t", value)
-        case ^Value:
-            return fmt.tprint(value)
+        case String: return string(value)
 
     }
     return "Invalid"
@@ -143,7 +143,6 @@ value_type :: proc(v: Value, loc := #caller_location) -> Type {
         case Bool:      return .Bool
         case None:      return .None
         case Char:      return .Char
-        case ^Value:    return .Reference
     }
     panic("Undeclared type", loc)
 }
@@ -173,40 +172,9 @@ runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_locatio
     os.exit(1)
 }
 
-resolve_lvalue_pointer :: proc(e: Expr, scope: ^Scope(Var)) -> ^Value {
-    #partial switch v in e.variant {
-        case Identifier:
-            variable := scope_fetch(scope, e.id)
-            if variable == nil do runtime_error(
-                e.pos,
-                "Undeclared identifier %w",
-                symbol_name(e.id),
-            )
-            return &variable.value
-        case DerefExpr:
-            if v.expr == nil do runtime_error(e.pos, "Invalid dereference target")
-            ref_val := eval(v.expr^, scope)
-            ref, ok := ref_val.(^Value)
-            if !ok do runtime_error(e.pos, "Cannot dereference non-reference value")
-            return ref
-        case:
-            runtime_error(e.pos, "Expression is not addressable")
-            return nil
-    }
-}
-
 eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
     result: Value
     switch v in e.variant {
-        case RefExpr:
-            if v.expr == nil do runtime_error(e.pos, "Invalid reference target")
-            result = resolve_lvalue_pointer(v.expr^, scope)
-        case DerefExpr:
-            if v.expr == nil do runtime_error(e.pos, "Invalid dereference target")
-            ref_val := eval(v.expr^, scope)
-            ref, ok := ref_val.(^Value)
-            if !ok do runtime_error(e.pos, "Cannot dereference non-reference value")
-            result = ref^
         case Int:
             result = Int(v)
         case Float:
@@ -215,6 +183,8 @@ eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
             result = Bool(v)
         case Char:
             result = Char(v)
+        case String:
+            result = String(v)
         case Identifier:
             variable := scope_fetch(scope, e.id)
             if variable == nil do runtime_error(
@@ -225,11 +195,45 @@ eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
             )
             result = variable.value
         case ^BinaryExpr:
-            val, ok := apply_op(
-                v.op, 
-                eval(v.left, scope, loc = loc), 
-                eval(v.right, scope, loc = loc)
-            )
+            left_val := eval(v.left, scope, loc = loc)
+            right_val := eval(v.right, scope, loc = loc)
+
+            left_var: ^Var
+            right_var: ^Var
+            if _, ok := v.left.variant.(Identifier); ok {
+                left_var = scope_fetch(scope, v.left.id)
+            }
+            if _, ok := v.right.variant.(Identifier); ok {
+                right_var = scope_fetch(scope, v.right.id)
+            }
+
+            if left_var != nil {
+                promote_inferred_for_binary(left_var, value_type(right_val), v.left.pos)
+                left_val = left_var.value
+            }
+            if right_var != nil {
+                promote_inferred_for_binary(right_var, value_type(left_val), v.right.pos)
+                right_val = right_var.value
+            }
+
+            left_type := value_type(left_val)
+            right_type := value_type(right_val)
+            if left_type == .Int && right_type == .Float {
+                if left_var != nil && !left_var.inferred do runtime_error(
+                    v.left.pos,
+                    "Cannot use int %v with float value",
+                    symbol_name(v.left.id)
+                )
+            }
+            if left_type == .Float && right_type == .Int {
+                if right_var != nil && !right_var.inferred do runtime_error(
+                    v.right.pos,
+                    "Cannot use int %v with float value",
+                    symbol_name(v.right.id)
+                )
+            }
+
+            val, ok := apply_op(v.op, left_val, right_val)
             if !ok do runtime_error(e.pos, "Invalid operands for binary operation")
             result = val
         case ^UnaryExpr:
@@ -259,6 +263,19 @@ eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
             runtime_error(e.pos, "Invalid expression: %w", e.variant, loc = loc)
     }
     return result
+}
+
+promote_inferred_for_binary :: proc(var: ^Var, other_type: Type, pos: Pos) {
+    if var == nil do return
+    if !var.inferred do return
+
+    if var.type == .Int && other_type == .Float {
+        int_val, ok := var.value.(Int)
+        if !ok do runtime_error(pos, "Inferred int has non-int value")
+        var.value = Float(int_val)
+        var.type = .Float
+        var.inferred = false
+    }
 }
 
 @(private = "file")
@@ -299,10 +316,6 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
                     symbol_name(arg)
                 )
                 val_type := reflect.union_variant_typeid(val.value)
-                for ref_val, ref_ok := val.value.(^Value); ref_ok; ref_val, ref_ok = ref_val.(^Value){
-                    val_type = reflect.union_variant_typeid(ref_val^)
-                    fmt.print("&", flush = false)
-                }
                 fmt.println(val_type)
             }
 
@@ -334,13 +347,32 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
                 param := func.params[i]
                 rhs := eval(arg, scope)
                 val_type := value_type(rhs)
-                if val_type != type_from_string(param.type) do runtime_error(
+                expected_type := type_from_string(param.type)
+                if expected_type == .Float && val_type == .Int {
+                    arg_var: ^Var
+                    if _, ok := arg.variant.(Identifier); ok {
+                        arg_var = scope_fetch(scope, arg.id)
+                    }
+                    if arg_var != nil {
+                        if !arg_var.inferred do runtime_error(
+                            arg.pos,
+                            "Invalid argument of type %v, expected %v",
+                            val_type, param.type
+                        )
+                        promote_inferred_for_binary(arg_var, .Float, arg.pos)
+                        rhs = arg_var.value
+                    } else {
+                        rhs = Float(rhs.(Int))
+                    }
+                    val_type = .Float
+                }
+                if val_type != expected_type do runtime_error(
                     arg.pos,
                     "Invalid argument of type %v, expected %v",
                     val_type, param.type
                 )
 
-                scope_add(&fn_scope, param.id.sym, Var { value_type(rhs), rhs, true})
+                scope_add(&fn_scope, param.id.sym, Var { value_type(rhs), rhs, true, false})
             }
 
             return_val := run_block(func.body, &fn_scope, .Block)
@@ -381,7 +413,7 @@ apply_unary_op :: #force_inline proc(op: UnaryOp, v: Value) -> (val: Value, ok: 
     return
 }
 
-apply_int_op :: proc(op: BinaryOp, a, b: Int) -> (val: Value, ok: bool) {
+apply_int_op :: #force_inline proc(op: BinaryOp, a, b: Int) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .Add: val = a + b
@@ -402,7 +434,7 @@ apply_int_op :: proc(op: BinaryOp, a, b: Int) -> (val: Value, ok: bool) {
     return
 }
 
-apply_float_op :: proc(op: BinaryOp, a, b: Float) -> (val: Value, ok: bool) {
+apply_float_op :: #force_inline proc(op: BinaryOp, a, b: Float) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .Add: val = a + b
@@ -422,7 +454,7 @@ apply_float_op :: proc(op: BinaryOp, a, b: Float) -> (val: Value, ok: bool) {
     return
 }
 
-apply_bool_op :: proc(op: BinaryOp, a, b: Bool) -> (val: Value, ok: bool) {
+apply_bool_op :: #force_inline proc(op: BinaryOp, a, b: Bool) -> (val: Value, ok: bool) {
     ok = true
     #partial switch op {
         case .And:      val = a && b
@@ -436,32 +468,28 @@ apply_bool_op :: proc(op: BinaryOp, a, b: Bool) -> (val: Value, ok: bool) {
     return
 }
 
-apply_op :: proc(op: BinaryOp, v1, v2: Value, loc := #caller_location) -> (val: Value, ok: bool) {
+apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value, loc := #caller_location) -> (val: Value, ok: bool) {
     #partial switch &left in v1 {
         case Int:
             right, right_ok := v2.(Int)
             if right_ok do return apply_int_op(op, left, right)
-            else {
-                right_float, right_float_ok := v2.(Float)
-                if !right_float_ok do return
-                return apply_float_op(op, Float(left), right_float)
-            }
+            right_float, right_float_ok := v2.(Float)
+            if right_float_ok do return apply_float_op(op, Float(left), right_float)
 
         case Float:
             right, right_ok := v2.(Float)
             if right_ok do return apply_float_op(op, left, right)
-            else {
-                right_int, right_int_ok := v2.(Int)
-                if !right_int_ok do return
-                return apply_float_op(op, left, Float(right_int))
-            }
+            right_int, right_int_ok := v2.(Int)
+            if right_int_ok do return apply_float_op(op, left, Float(right_int))
 
         case Bool:
             right, right_ok := v2.(Bool)
             if !right_ok do return
             return apply_bool_op(op, left, right)
     }
-    runtime_error({}, "Can't apply op: %v %v %v", v1, op, v2, loc = loc)
+    v1_variant := reflect.union_variant_typeid(v1)
+    v2_variant := reflect.union_variant_typeid(v2)
+    runtime_error({}, "Can't apply op: %v: %v %v %v: %v", v1, v1_variant, op, v2, v2_variant, loc = loc)
 
     return
 }
@@ -479,8 +507,11 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
                 switch declr_stmt in s.variant {
                     case VarDeclrStmt:
                         rhs := eval(declr_stmt.value, &frame)
-                        value_type := value_type(rhs)
-                        var := Var{value_type, rhs, declr_stmt.const}
+                        var_type := declr_stmt.type
+                        if declr_stmt.inferred {
+                            var_type = value_type(rhs)
+                        }
+                        var := Var{var_type, rhs, declr_stmt.const, declr_stmt.inferred}
                         scope_add(&frame, s.id.sym, var)
                     case FnDeclrStmt:
                         if block_type != .Global do runtime_error(
@@ -502,54 +533,57 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
                     "Cannot assign to constant %w",
                     s.id.text
                 )
-                rhs := eval(s.value, &frame)
 
-                if s.deref {
-                    ref, ok := assignee.value.(^Value)
+                rhs := eval(s.value, &frame)
+                rhs_var: ^Var
+                if _, ok := s.value.variant.(Identifier); ok {
+                    rhs_var = scope_fetch(&frame, s.value.id)
+                    if rhs_var != nil {
+                        promote_inferred_for_binary(rhs_var, assignee.type, s.value.pos)
+                        rhs = rhs_var.value
+                    }
+                }
+                rhs_type := value_type(rhs)
+                if assignee.type != rhs_type {
+                    if assignee.type == .Float && rhs_type == .Int {
+                        if rhs_var != nil && !rhs_var.inferred do runtime_error(
+                            s.value.pos,
+                            "Cannot assign int %v to float %v",
+                            symbol_name(s.value.id),
+                            s.id.text
+                        )
+                        rhs = Float(rhs.(Int))
+                        rhs_type = .Float
+                    }
+                    else if assignee.type == .Int && assignee.inferred && rhs_type == .Float {
+                        assignee.type = .Float
+                        assignee.inferred = false
+                    }
+                    else do runtime_error(
+                        s.id.pos,
+                        "Cannot assign value of type %v to %v: %v",
+                        value_type(rhs), s.id.text, assignee.type
+                    )
+                }
+
+                if s.op != .Assign {
+                    op, ok := binary_op_from_assign_op(s.op)
                     if !ok do runtime_error(
                         s.id.pos,
-                        "Cannot assign through non-reference %w",
+                        "Invalid compound assignment operator %w",
                         s.id.text
                     )
 
-                    target := ref^
-                    if s.op != .Assign {
-                        op, ok := binary_op_from_assign_op(s.op)
-                        if !ok do runtime_error(
-                            s.id.pos,
-                            "Invalid compound assignment operator %w",
-                            s.id.text
-                        )
-
-                        rhs, ok = apply_op(op, target, rhs)
-                        if !ok do runtime_error(
-                            s.id.pos,
-                            "Cannot apply compound assignment through %w",
-                            s.id.text
-                        )
-                    }
-
-                    ref^ = rhs
-                } else {
-                    if s.op != .Assign {
-                        op, ok := binary_op_from_assign_op(s.op)
-                        if !ok do runtime_error(
-                            s.id.pos,
-                            "Invalid compound assignment operator %w",
-                            s.id.text
-                        )
-
-                        rhs, ok = apply_op(op, assignee.value, rhs)
-                        if !ok do runtime_error(
-                            s.id.pos,
-                            "Cannot apply compound assignment to %w",
-                            s.id.text
-                        )
-                    }
-
-                    assignee.type = value_type(rhs)
-                    assignee.value = rhs
+                    rhs, ok = apply_op(op, assignee.value, rhs)
+                    if !ok do runtime_error(
+                        s.id.pos,
+                        "Cannot apply compound assignment to %w",
+                        s.id.text
+                    )
                 }
+
+                assignee.value = rhs
+
             case CallStmt:
                 return_value = execute_call(s.id, s.args, &frame)
             case IfStmt:
@@ -577,6 +611,13 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
 }
 
 run_ast :: proc(program: BlockStmt) -> Value {
+    for stmt in program {
+        if declr, ok := stmt.(DeclrStmt); ok {
+            if fn_declr, declr_ok := declr.variant.(FnDeclrStmt); declr_ok {
+                funcs[declr.id.sym] = Func(fn_declr)
+            }
+        }
+    }
     scope: ^Scope(Var) = nil
     run_block(program, scope, .Global)
     return {}

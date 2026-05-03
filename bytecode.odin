@@ -218,6 +218,9 @@ compile_expr :: proc(chunk: ^Chunk, expr: Expr, locals: ^map[SymbolId]u32 = nil)
         case Char:
             idx := add_constant(chunk, Char(value))
             emit_abx(chunk, .Const, 0, idx, expr.pos.line)
+        case String:
+            idx := add_constant(chunk, String(value))
+            emit_abx(chunk, .Const, 0, idx, expr.pos.line)
         case Identifier:
             if locals != nil {
                 local_slot, is_local := locals[expr.id]
@@ -242,6 +245,7 @@ compile_expr :: proc(chunk: ^Chunk, expr: Expr, locals: ^map[SymbolId]u32 = nil)
         case ^UnaryExpr:
             compile_expr(chunk, value.expr, locals)
             emit_unary_op(chunk, value.op, expr.pos.line)
+
         case:
             panic("Only literals, identifiers, and binary expressions are supported")
     }

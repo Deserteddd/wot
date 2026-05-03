@@ -48,21 +48,24 @@ current_frame :: #force_inline proc() -> ^Frame #no_bounds_check {
 @(private = "file")
 call_builtin :: proc(sym: SymbolId, argc: int) -> (handled: bool) {
     if sym != vm.builtin_print && sym != vm.builtin_println do return false
-    for i := argc - 1; i >= 0; i -= 1 {
-        if i > 0 {
-            fmt.print(" ", flush = false)
-        }
-        arg := vm_pop()
-        #partial switch a in arg {
-            case Float: bufio.writer_write_rune(&vm.writer, rune(a))
+    args: [dynamic; 64]Value
+    for _ in 0..<argc {
+        append(&args, vm_pop())
+    }
+    #reverse for arg, i in args {
+        if i < len(args) - 1 do bufio.writer_write_byte(&vm.writer, ' ')
+        switch a in arg {
+            case Float: 
+                bufio.writer_write_string(&vm.writer, fmt.tprintf("%v", a))
             case Int:   
-                buf: [32]byte
-                strconv.write_int(buf[:], i64(a), 10)
-                bufio.writer_write(&vm.writer, buf[:])
-            case Bool:  bufio.writer_write_string(&vm.writer, a ? "true" : "false")
+                bufio.writer_write_string(&vm.writer, fmt.tprintf("%v", a))
+            case Bool:  
+                bufio.writer_write_string(&vm.writer, a ? "true" : "false")
             case Char:  
                 bufio.writer_write_byte(&vm.writer, byte(a))
                 if a == '\n' do vm.flush = true
+            case String:
+                bufio.writer_write_string(&vm.writer, string(a))
             case None:  bufio.writer_write_string(&vm.writer, "None")
         }
     }
@@ -307,6 +310,7 @@ run_ir :: proc(ir: ^ProgramIR) #no_bounds_check {
         if vm.flush {
             bufio.writer_flush(&vm.writer)
             vm.flush = false
+            free_all(context.temp_allocator)
         }
     }
 }
