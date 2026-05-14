@@ -26,7 +26,6 @@ There is one flag you can include: `-dump`. This will generate a dump of the IR 
 <stmt>           ::= <decl>
 				  | <assign>
 				  | <return>
-				  | <break>
 				  | <if>
 				  | <while>
 				  | <block>
@@ -46,7 +45,6 @@ There is one flag you can include: `-dump`. This will generate a dump of the IR 
 <assign-op>      ::= "=" | "+=" | "-=" | "*=" | "/=" | "%="
 
 <return>         ::= "return" [ <expr> ]
-<break>          ::= "break"
 
 <if>             ::= "if" <expr> <block> [ "else" <block> ]
 <while>          ::= "while" <expr> <block>
