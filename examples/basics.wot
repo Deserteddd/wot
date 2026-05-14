@@ -1,0 +1,35 @@
+a: float = 4.2 			// Declaration of float with value
+b := 5 					// Declaration with just a value
+a += b 					// Type of b gets inferred here
+
+
+IS_EVEN :: "is even" 	// Constant declaration
+c: int 					// Declaration with just type
+println(a) 				// One of two built-in functions
+
+// print() The other built-in. Doesn't flush to stdout, or add a newline.
+
+while c <= 10 {
+	// Function calls can be used as condition as long as they return bool
+	if is_even(c) { 
+		// println accepts n arguments where n <= 64, adding a space between each.
+		print(c)
+		print_even() 
+	}
+	c += 1
+}
+
+// Function declarations must be constant
+// They can appear anywhere in the file scope and used before declaration
+is_even :: fn(n: int) -> bool {
+	return n%2==0
+}
+
+// Function with no arguments or return type
+print_even :: fn() {
+	println("", IS_EVEN) // Constant globals can be accessed from function scope
+	// println(c) 	     // This would error, since c is a non-constant global
+
+	// Returning from a function with no return type causes one of the few ugly error messages, 
+	// since the compiler just panics. This is likely an easy fix, but it's a work in progress
+}

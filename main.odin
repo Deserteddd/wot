@@ -1,12 +1,11 @@
 package wot
 
 import "core:os"
-import filepath "core:path/filepath"
 import "core:fmt"
 import "core:time"
-import vmem "core:mem/virtual"
-import "base:runtime"
 import "core:slice"
+import vmem "core:mem/virtual"
+import filepath "core:path/filepath"
 
 main :: proc() {
     arena: vmem.Arena
@@ -43,7 +42,6 @@ build_run :: proc(source: string, dump: bool) {
     run_ast(program)
     ir := generate_program_ir(program)
     free_all(context.temp_allocator)
-    print_compiler_stage_time(&start, "Compiled")
 
     if dump {
         dump_name := fmt.tprintf("%s_dump.txt", filepath.stem(os.args[1]))
@@ -55,7 +53,7 @@ build_run :: proc(source: string, dump: bool) {
         }
         fmt.printfln("Wrote IR dump to: %v", dump_path)
     }
-    start = time.now()
+    print_compiler_stage_time(&start, "Compiled")
     run_ir(&ir)
     print_compiler_stage_time(&start, "VM ran")
 }

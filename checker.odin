@@ -142,6 +142,7 @@ value_type :: proc(v: Value, loc := #caller_location) -> Type {
         case Float:     return .Float
         case Bool:      return .Bool
         case None:      return .None
+        case String:    return .String
         case Char:      return .Char
     }
     panic("Undeclared type", loc)
@@ -161,11 +162,11 @@ binary_op_from_assign_op :: proc(aop: AssignOp) -> (op: BinaryOp, ok: bool) {
     return
 }
 
-runtime_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_location) {
+checker_error :: proc(pos: Pos, msg: string, args: ..any, loc := #caller_location) {
     if ODIN_DEBUG {
         fmt.eprintf("%v ", loc)
     }
-    fmt.eprint("Runtime error: ")
+    fmt.eprint("Error: ")
 	if pos != {} do fmt.eprintf("%s(%d:%d) ", pos.file, pos.line, pos.column)
 	fmt.eprintf(msg, ..args)
 	fmt.eprintf("\n")
@@ -187,7 +188,7 @@ eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
             result = String(v)
         case Identifier:
             variable := scope_fetch(scope, e.id)
-            if variable == nil do runtime_error(
+            if variable == nil do checker_error(
                 e.pos, 
                 "Undeclared identifier %w", 
                 symbol_name(e.id),
@@ -219,14 +220,14 @@ eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
             left_type := value_type(left_val)
             right_type := value_type(right_val)
             if left_type == .Int && right_type == .Float {
-                if left_var != nil && !left_var.inferred do runtime_error(
+                if left_var != nil && !left_var.inferred do checker_error(
                     v.left.pos,
                     "Cannot use int %v with float value",
                     symbol_name(v.left.id)
                 )
             }
             if left_type == .Float && right_type == .Int {
-                if right_var != nil && !right_var.inferred do runtime_error(
+                if right_var != nil && !right_var.inferred do checker_error(
                     v.right.pos,
                     "Cannot use int %v with float value",
                     symbol_name(v.right.id)
@@ -234,11 +235,11 @@ eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
             }
 
             val, ok := apply_op(v.op, left_val, right_val)
-            if !ok do runtime_error(e.pos, "Invalid operands for binary operation")
+            if !ok do checker_error(e.pos, "Invalid operands for binary operation")
             result = val
         case ^UnaryExpr:
             val, ok := apply_unary_op(v.op, eval(v.expr, scope))
-            if !ok do runtime_error(
+            if !ok do checker_error(
                 e.pos, 
                 "Invalid operand for unary opertaion %w", 
                 to_string_unary_op(v.op)
@@ -255,23 +256,24 @@ eval :: proc(e: Expr, scope: ^Scope(Var), loc := #caller_location) -> Value {
                     }
                     result = execute_call(id_token, v.args, scope)
                 case:
-                    runtime_error(v.callee.pos, "Invalid call")
+                    checker_error(v.callee.pos, "Invalid call")
             }
         case None:
             return v
         case:
-            runtime_error(e.pos, "Invalid expression: %w", e.variant, loc = loc)
+            checker_error(e.pos, "Invalid expression: %w", e.variant, loc = loc)
     }
     return result
 }
 
+@(private = "file")
 promote_inferred_for_binary :: proc(var: ^Var, other_type: Type, pos: Pos) {
     if var == nil do return
     if !var.inferred do return
 
     if var.type == .Int && other_type == .Float {
         int_val, ok := var.value.(Int)
-        if !ok do runtime_error(pos, "Inferred int has non-int value")
+        if !ok do checker_error(pos, "Inferred int has non-int value")
         var.value = Float(int_val)
         var.type = .Float
         var.inferred = false
@@ -290,7 +292,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
 
         case:
             func, func_found := funcs[id.sym]
-            if !func_found do runtime_error(
+            if !func_found do checker_error(
                 id.pos,
                 "Undeclared function: %v",
                 id.text
@@ -303,7 +305,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
             if len(func.params) != len(args) {
                 args_pos := id.pos
                 args_pos.column += utf8.rune_count(id.text)
-                runtime_error(
+                checker_error(
                     args_pos,
                     "Expected %v arguments, got %v",
                     len(func.params), len(args)
@@ -314,14 +316,14 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
                 param := func.params[i]
                 rhs := eval(arg, scope)
                 val_type := value_type(rhs)
-                expected_type := type_from_string(param.type)
+                expected_type := type_from_symbol(param.type)
                 if expected_type == .Float && val_type == .Int {
                     arg_var: ^Var
                     if _, ok := arg.variant.(Identifier); ok {
                         arg_var = scope_fetch(scope, arg.id)
                     }
                     if arg_var != nil {
-                        if !arg_var.inferred do runtime_error(
+                        if !arg_var.inferred do checker_error(
                             arg.pos,
                             "Invalid argument of type %v, expected %v",
                             val_type, param.type
@@ -333,7 +335,7 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
                     }
                     val_type = .Float
                 }
-                if val_type != expected_type do runtime_error(
+                if val_type != expected_type do checker_error(
                     arg.pos,
                     "Invalid argument of type %v, expected %v",
                     val_type, param.type
@@ -342,14 +344,14 @@ execute_call :: proc(id: Token, args: []Expr, scope: ^Scope(Var)) -> Value {
                 scope_add(&fn_scope, param.id.sym, Var { value_type(rhs), rhs, true, false})
             }
 
-            return_val := run_block(func.body, &fn_scope, .Block)
-            expected_type := type_from_string(func.return_type)
+            return_val := check_block(func.body, &fn_scope, .Block)
+            expected_type := type_from_symbol(func.return_type)
             actual_type := value_type(return_val)
 
-            if actual_type != expected_type do runtime_error(
+            if actual_type != expected_type do checker_error(
                 id.pos,
                 "Invalid return type: %v, expected %v",
-                value_type(return_val), type_from_string(func.return_type)
+                value_type(return_val), type_from_symbol(func.return_type)
             )
             return return_val
     }
@@ -456,20 +458,20 @@ apply_op :: #force_inline proc(op: BinaryOp, v1, v2: Value, loc := #caller_locat
     }
     v1_variant := reflect.union_variant_typeid(v1)
     v2_variant := reflect.union_variant_typeid(v2)
-    runtime_error({}, "Can't apply op: %v: %v %v %v: %v", v1, v1_variant, op, v2, v2_variant, loc = loc)
+    checker_error({}, "Can't apply op: %v: %v %v %v: %v", v1, v1_variant, op, v2, v2_variant, loc = loc)
 
     return
 }
 
 @(private = "file")
-run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) -> Value {
+check_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) -> Value {
     frame := scope_push(scope, block_type)
     defer scope_pop(&frame)
 
     return_value: Value
 
     for stmt in block {
-        #partial switch &s in stmt {
+        switch &s in stmt {
             case DeclrStmt:
                 switch declr_stmt in s.variant {
                     case VarDeclrStmt:
@@ -481,7 +483,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
                         var := Var{var_type, rhs, declr_stmt.const, declr_stmt.inferred}
                         scope_add(&frame, s.id.sym, var)
                     case FnDeclrStmt:
-                        if block_type != .Global do runtime_error(
+                        if block_type != .Global do checker_error(
                             s.id.pos,
                             "Nested functions aren't supported (yet)"
                         )
@@ -490,12 +492,12 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
                 return eval(Expr(s), &frame)
             case AssignStmt:
                 assignee := scope_fetch(&frame, s.id.sym)
-                if assignee == nil do runtime_error(
+                if assignee == nil do checker_error(
                     s.id.pos,
                     "Undeclared variable: %v",
                     s.id.text
                 )
-                if assignee.const do runtime_error(
+                if assignee.const do checker_error(
                     s.id.pos,
                     "Cannot assign to constant %w",
                     s.id.text
@@ -513,7 +515,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
                 rhs_type := value_type(rhs)
                 if assignee.type != rhs_type {
                     if assignee.type == .Float && rhs_type == .Int {
-                        if rhs_var != nil && !rhs_var.inferred do runtime_error(
+                        if rhs_var != nil && !rhs_var.inferred do checker_error(
                             s.value.pos,
                             "Cannot assign int %v to float %v",
                             symbol_name(s.value.id),
@@ -526,7 +528,7 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
                         assignee.type = .Float
                         assignee.inferred = false
                     }
-                    else do runtime_error(
+                    else do checker_error(
                         s.id.pos,
                         "Cannot assign value of type %v to %v: %v",
                         value_type(rhs), s.id.text, assignee.type
@@ -535,14 +537,14 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
 
                 if s.op != .Assign {
                     op, ok := binary_op_from_assign_op(s.op)
-                    if !ok do runtime_error(
+                    if !ok do checker_error(
                         s.id.pos,
                         "Invalid compound assignment operator %w",
                         s.id.text
                     )
 
                     rhs, ok = apply_op(op, assignee.value, rhs)
-                    if !ok do runtime_error(
+                    if !ok do checker_error(
                         s.id.pos,
                         "Cannot apply compound assignment to %w",
                         s.id.text
@@ -555,23 +557,17 @@ run_block :: proc(block: BlockStmt, scope: ^Scope(Var), block_type: Scope_Kind) 
                 return_value = execute_call(s.id, s.args, &frame)
             case IfStmt:
                 cond := eval(s.condition, &frame)
-                if bool_val, bool_val_ok := cond.(Bool); bool_val_ok {
-                    // if bool_val {
-                        run_block(s.main_body, &frame, .Block)
-                    // } else {
-                        run_block(s.else_body, &frame, .Block)
-                    // }
-                } else do runtime_error(s.condition.pos, "If-condition must evaluate to bool")
+                if _, bool_val_ok := cond.(Bool); bool_val_ok {
+                    check_block(s.main_body, &frame, .Block)
+                    check_block(s.else_body, &frame, .Block)
+                } else do checker_error(s.condition.pos, "If-condition must evaluate to bool")
             case WhileStmt:
                 cond := eval(s.condition, &frame)
-                if bool_val, bool_val_ok := cond.(Bool); bool_val_ok {
-                    // for bool_val {
-                        run_block(s.body, &frame, .Block)
-                        // bool_val = eval(s.condition, &frame).(Bool)
-                    // }
-                } else do runtime_error(s.condition.pos, "While-condition must evaluate to bool")
+                if _, bool_val_ok := cond.(Bool); bool_val_ok {
+                    check_block(s.body, &frame, .Block)
+                } else do checker_error(s.condition.pos, "While-condition must evaluate to bool")
             case BlockStmt:
-                run_block(s, &frame, .Block)
+                check_block(s, &frame, .Block)
         }
     }
 
@@ -587,6 +583,6 @@ run_ast :: proc(program: BlockStmt) -> Value {
         }
     }
     scope: ^Scope(Var) = nil
-    run_block(program, scope, .Global)
+    check_block(program, scope, .Global)
     return {}
 }

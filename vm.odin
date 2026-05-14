@@ -4,8 +4,6 @@ import "core:fmt"
 import "core:strings"
 import "core:bufio"
 import "core:os"
-import "core:strconv"
-import "base:runtime"
 
 @(private = "file")
 Frame :: struct {
@@ -175,7 +173,7 @@ fmt_ir :: proc(ir: ProgramIR) -> string {
         }
 
         strings.write_rune(&b, ')')
-        if fn.return_type != "" do strings.write_string(&b, fmt.tprintf(" -> %s", fn.return_type))
+        if fn.return_type != 0 do strings.write_string(&b, fmt.tprintf(" -> %s", symbol_name(fn.return_type)))
         strings.write_string(&b, " ==\n")
         for ins, i in fn.body.code {
             strings.write_string(&b, fmt.tprintf("[%03d] ",  i))
@@ -242,7 +240,7 @@ execute :: proc() -> (halt: bool) #no_bounds_check #no_type_assert {
             } else {
                 vm_push(ret)
             }
-
+        
         case .Add, .Sub, .Mul, .Div, .Mod, .CmpEq, .NotEq, .Lt, .Gt, .LtEq, .GtEq:
             lhs := vm_pop()
             rhs := vm_pop()

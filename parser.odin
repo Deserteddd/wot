@@ -16,7 +16,7 @@ Stmt :: union {
     IfStmt,
     WhileStmt,
     BlockStmt,
-    CallStmt
+    CallStmt,
 }
 
 DeclrStmt :: struct {
@@ -36,13 +36,13 @@ VarDeclrStmt :: struct {
 
 FnDeclrStmt :: struct {
     params: []ParamInfo,
-    return_type: string,
+    return_type: SymbolId,
     body: BlockStmt
 }
 
 ParamInfo :: struct {
     id: Token,
-    type: string
+    type: SymbolId
 }
 
 AssignStmt :: struct {
@@ -183,7 +183,6 @@ parse_program :: proc(p: ^Parser) -> BlockStmt {
             fmt.eprintfln("Failed to parse file %w", p.lexer.path)
             os.exit(1)
         }
-        // println_statement(stmt)
         append(&stmts, stmt)
         skip_stmt_separator(p)
         if p.current.kind == .CloseBrace do break
@@ -224,7 +223,7 @@ parse_statement :: proc(p: ^Parser, loc := #caller_location) -> Stmt {
     #partial switch p.current.kind {
         case .Id:
             return parse_identifier_stmt(p)
-        case .Return:
+        case .Return, .Break:
             return parse_keyword_stmt(p)
         case .If:
             return parse_if_stmt(p)
@@ -251,7 +250,7 @@ parse_keyword_stmt :: proc(p: ^Parser) -> Stmt {
                 None {},
             }; else do stmt = ReturnStmt(parse_expression(p))
         case:
-            parse_error(p, "Not implemented:")
+            parse_error(keyword.pos, "Not implemented: %v", keyword.text)
             return nil
     }
     return stmt
@@ -369,7 +368,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
             }
         case .Id:
             type_token := p.current
-            type := type_from_string(p.current.text)
+            type := type_from_symbol(p.current.sym)
             if type == .Invalid do parse_error(p, "Invalid type:")
             advance(p)
             #partial switch p.current.kind {
@@ -415,7 +414,7 @@ parse_declaration :: proc(p: ^Parser, id: Token) -> Stmt {
                             parse_error_custom(type_token.pos, "Undeclared type: %v", type_token.text)
                     }
                     stmt.variant = VarDeclrStmt {
-                        type = type_from_string(type_token.text),
+                        type = type_from_symbol(type_token.sym),
                         value = expr,
                         const = false,
                         inferred = false
@@ -485,7 +484,7 @@ parse_fn :: proc(p: ^Parser, id: Token) -> (FnDeclrStmt, bool) {
                     parse_error(p, "Expected a type name, got:")
                     return {}, false
                 }
-                stmt.return_type = p.current.text
+                stmt.return_type = p.current.sym
                 advance(p)
                 if p.current.kind != .OpenBrace {
                     parse_error(p, "Expected {, got:")
@@ -526,7 +525,7 @@ parse_params :: proc(p: ^Parser) -> ([]ParamInfo, bool) {
             parse_error(p, "Expected a type name, got:")
             return {}, false
         }
-        info.type = p.current.text
+        info.type = p.current.sym
         advance(p)
 
         return info, true
@@ -889,7 +888,8 @@ println_statement :: proc(s: Stmt) {
     fmt.println()
 }
 
-type_from_string :: #force_inline proc(typename: string) -> Type {
+type_from_symbol :: #force_inline proc(type: SymbolId) -> Type {
+    typename := symbol_name(type)
     switch typename {
         case "int":     return .Int
         case "float":   return .Float

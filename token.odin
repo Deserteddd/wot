@@ -1,9 +1,6 @@
 #+feature dynamic-literals
 package wot
 
-import "core:fmt"
-import "core:os"
-
 SymbolId :: distinct u16
 
 symbol_ids_by_name: map[string]SymbolId
@@ -99,6 +96,7 @@ TokenKind :: enum u32 {
     Else,
     While,
     Return,
+    Break,
     True,
     False,
     Print,
@@ -112,6 +110,7 @@ keywords: map[string]TokenKind = {
     "false"   = .False,
     "else"    = .Else,
     "while"   = .While,
-    "fn"      = .Fn
+    "fn"      = .Fn,
+    "break"   = .Break
 }
 

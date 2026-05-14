@@ -3,7 +3,6 @@ package wot
 import "core:fmt"
 import "core:os"
 
-// OpCode is the minimal instruction set for declarations, assignments, and arithmetic.
 OpCode :: enum u8 {
     Halt,
     Return,
@@ -32,13 +31,11 @@ OpCode :: enum u8 {
     Or,
 }
 
-// Instruction is a fixed-width 32-bit instruction with named fields.
 Instruction :: struct #packed {
     opcode: OpCode,
     a, b, c: u8
 }
 
-// Chunk stores emitted instructions and constant/global symbol tables.
 Chunk :: struct {
     code:       [dynamic]Instruction,
     constants:  [dynamic]Value,
@@ -51,7 +48,7 @@ Chunk :: struct {
 FunctionIR :: struct {
     name:        SymbolId,
     params:      []ParamInfo,
-    return_type: string,
+    return_type: SymbolId,
     body:        Chunk,
 }
 
@@ -61,7 +58,6 @@ ProgramIR :: struct {
     function_idx: map[SymbolId]u32,
 }
 
-// make_instruction_abc builds an instruction using 3 byte operands.
 make_instruction_abc :: #force_inline proc(op: OpCode, a, b, c: u8) -> Instruction {
     return Instruction {
         opcode = op,
@@ -71,7 +67,6 @@ make_instruction_abc :: #force_inline proc(op: OpCode, a, b, c: u8) -> Instructi
     }
 }
 
-// make_instruction_abx builds an instruction using one 16-bit operand in b/c.
 make_instruction_abx :: #force_inline proc(op: OpCode, a: u8, bx: u16) -> Instruction {
     return Instruction {
         opcode = op,
@@ -81,44 +76,36 @@ make_instruction_abx :: #force_inline proc(op: OpCode, a: u8, bx: u16) -> Instru
     }
 }
 
-// bx_of decodes the 16-bit operand from instruction fields b/c.
 bx_of :: #force_inline proc(ins: Instruction) -> u16 {
     return u16(ins.b) | (u16(ins.c) << 8)
 }
 
-// sbx_of decodes a signed 16-bit operand from instruction fields b/c.
 sbx_of :: #force_inline proc(ins: Instruction) -> i16 {
     return i16(bx_of(ins))
 }
 
-// emit appends one instruction into the chunk.
 emit :: proc(chunk: ^Chunk, ins: Instruction, line: u32 = 0) -> u32 {
     _ = line
     append(&chunk.code, ins)
     return u32(len(chunk.code) - 1)
 }
 
-// emit_abc emits an instruction that uses A/B/C operands.
 emit_abc :: proc(chunk: ^Chunk, op: OpCode, a, b, c: u8, line: u32 = 0) -> u32 {
     return emit(chunk, make_instruction_abc(op, a, b, c), line)
 }
 
-// emit_abx emits an instruction that uses A/Bx operands.
 emit_abx :: proc(chunk: ^Chunk, op: OpCode, a: u8, bx: u16, line: u32 = 0) -> u32 {
     return emit(chunk, make_instruction_abx(op, a, bx), line)
 }
 
-// emit_asbx emits an instruction that uses A/sBx operands.
 emit_asbx :: proc(chunk: ^Chunk, op: OpCode, a: u8, sbx: i16, line: u32 = 0) -> u32 {
     return emit_abx(chunk, op, a, u16(sbx), line)
 }
 
-// emit_jump_placeholder emits a jump with a placeholder offset.
 emit_jump_placeholder :: proc(chunk: ^Chunk, op: OpCode, line: u32 = 0) -> u32 {
     return emit_asbx(chunk, op, 0, 0, line)
 }
 
-// patch_jump_to_current patches a placeholder jump to target the current end of code.
 patch_jump_to_current :: proc(chunk: ^Chunk, jump_ip: u32) {
     target_ip := i32(len(chunk.code))
     offset := target_ip - i32(jump_ip) - 1
@@ -127,14 +114,12 @@ patch_jump_to_current :: proc(chunk: ^Chunk, jump_ip: u32) {
     chunk.code[int(jump_ip)].c = u8((u16(i16(offset)) >> 8) & 0x00ff)
 }
 
-// add_constant inserts a literal into the constant pool and returns its index.
 add_constant :: proc(chunk: ^Chunk, value: Value) -> u16 {
     if len(chunk.constants) >= 65536 do panic("Too many constants for ABx operand")
     append(&chunk.constants, value)
     return u16(len(chunk.constants) - 1)
 }
 
-// add_symbol inserts or reuses a global symbol slot and returns its index.
 add_symbol :: proc(chunk: ^Chunk, sym: SymbolId) -> u16 {
     if chunk.symbol_idx == nil {
         chunk.symbol_idx = make_map(map[SymbolId]u32)
@@ -153,7 +138,6 @@ add_symbol :: proc(chunk: ^Chunk, sym: SymbolId) -> u16 {
     return u16(idx)
 }
 
-// add_local inserts or reuses a local symbol slot and returns its index.
 add_local :: proc(chunk: ^Chunk, sym: SymbolId) -> u16 {
     if chunk.local_idx == nil {
         chunk.local_idx = make_map(map[SymbolId]u32)
@@ -172,7 +156,6 @@ add_local :: proc(chunk: ^Chunk, sym: SymbolId) -> u16 {
     return u16(idx)
 }
 
-// emit_binary_op emits bytecode for supported arithmetic and comparison binary operators.
 emit_binary_op :: proc(chunk: ^Chunk, op: BinaryOp, line: u32) {
     #partial switch op {
         case .Add: emit_abc(chunk, .Add, 0, 0, 0, line)
@@ -203,7 +186,6 @@ emit_unary_op :: proc(chunk: ^Chunk, op: UnaryOp, line: u32) {
     }
 }
 
-// compile_expr emits IR for literals, identifiers, and arithmetic expressions.
 compile_expr :: proc(chunk: ^Chunk, expr: Expr, locals: ^map[SymbolId]u32 = nil) {
     #partial switch value in expr.variant {
         case Int:
@@ -251,7 +233,6 @@ compile_expr :: proc(chunk: ^Chunk, expr: Expr, locals: ^map[SymbolId]u32 = nil)
     }
 }
 
-// compile_assignment emits IR for plain and arithmetic compound assignments.
 compile_assignment :: proc(chunk: ^Chunk, stmt: AssignStmt, locals: ^map[SymbolId]u32 = nil) {
     slot: u16
     is_local := false
@@ -321,7 +302,6 @@ compile_assignment :: proc(chunk: ^Chunk, stmt: AssignStmt, locals: ^map[SymbolI
     }
 }
 
-// compile_if emits IR for if/else using a conditional jump and optional end jump.
 compile_if :: proc(chunk: ^Chunk, stmt: IfStmt, in_function: bool = false, locals: ^map[SymbolId]u32 = nil) {
     compile_expr(chunk, stmt.condition, locals)
     false_jump := emit_jump_placeholder(chunk, .JumpIfFalse, stmt.pos.line)
@@ -357,22 +337,18 @@ compile_while :: proc(chunk: ^Chunk, stmt: WhileStmt, in_function: bool = false,
 
     compile_block(chunk, stmt.body, in_function, locals)
 
-    // Jump back to loop_start to re-evaluate condition
     back_jump_offset := i16(loop_start) - i16(len(chunk.code)) - 1
     emit_asbx(chunk, .Jump, 0, back_jump_offset, stmt.pos.line)
     
-    // Patch false_jump to exit loop
     patch_jump_to_current(chunk, false_jump)
 }
 
-// compile_block emits IR for all statements in a block.
 compile_block :: proc(chunk: ^Chunk, block: BlockStmt, in_function: bool = false, locals: ^map[SymbolId]u32 = nil) {
     for child in block {
         compile_stmt(chunk, child, in_function, locals)
     }
 }
 
-// compile_stmt emits IR for declaration and assignment statements only.
 compile_stmt :: proc(chunk: ^Chunk, stmt: Stmt, in_function: bool = false, locals: ^map[SymbolId]u32 = nil) {
     #partial switch s in stmt {
         case DeclrStmt:
@@ -438,7 +414,6 @@ compile_function_decl :: proc(ir: ^ProgramIR, id: Token, decl: FnDeclrStmt) {
     ir.function_idx[id.sym] = u32(len(ir.functions) - 1)
 }
 
-// generate_program_ir compiles a block into minimal declaration/assignment IR.
 generate_program_ir :: proc(program: BlockStmt) -> ProgramIR {
     ir: ProgramIR
 
